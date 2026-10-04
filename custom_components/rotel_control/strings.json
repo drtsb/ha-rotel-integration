@@ -1,0 +1,96 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Rotel amplifier",
+        "description": "Enter the network address of the amplifier and the TCP port of its control interface (9500 by default).",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "model_profile": "Model",
+          "name": "Name"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the amplifier.",
+          "port": "TCP port of the Rotel control interface.",
+          "model_profile": "Determines the list of inputs and the volume range.",
+          "name": "Optional name of the device."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to the Rotel amplifier",
+        "description": "The amplifier did not answer. Check that it is powered on and reachable, then update the connection settings.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "model_profile": "Model",
+          "name": "Name"
+        }
+      },
+      "reconfigure": {
+        "title": "Change the Rotel amplifier connection",
+        "description": "Update the connection settings of the amplifier.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "model_profile": "Model",
+          "name": "Name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect: the device did not answer the Rotel protocol on this address and port."
+    },
+    "abort": {
+      "already_configured": "This amplifier is already configured.",
+      "not_rotel": "The discovered device is not a Rotel amplifier.",
+      "not_supported": "The discovered device does not expose a usable address.",
+      "reauth_successful": "Reconnected successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rotel amplifier options",
+        "data": {
+          "poll_interval": "Polling interval (seconds)",
+          "model_profile": "Model"
+        },
+        "data_description": {
+          "poll_interval": "How often the amplifier is asked for its state. Keep it at 2 s unless you see problems on the network."
+        }
+      }
+    }
+  },
+  "entity": {
+    "media_player": {
+      "amplifier": {
+        "name": "Amplifier"
+      }
+    },
+    "number": {
+      "volume_db": {
+        "name": "Volume"
+      }
+    },
+    "select": {
+      "input": {
+        "name": "Input"
+      },
+      "record_input": {
+        "name": "Record input"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Firmware"
+      },
+      "device_model": {
+        "name": "Device model"
+      },
+      "protocol": {
+        "name": "Control connection"
+      }
+    }
+  }
+}
