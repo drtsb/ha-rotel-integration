@@ -1,0 +1,10 @@
+# Home Assistant core is required to import the integration and to run the
+# end-to-end tests. The custom component test harness pins a matching version,
+# so both are installed together.
+homeassistant==2025.1.4
+pytest-homeassistant-custom-component==0.13.205
+pytest>=8.0
+pytest-asyncio>=0.24
+ruff>=0.6
+mypy>=1.11
+voluptuous>=0.13

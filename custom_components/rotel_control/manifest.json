@@ -1,0 +1,23 @@
+{
+  "domain": "rotel_control",
+  "name": "Rotel Control",
+  "codeowners": ["@drtsb"],
+  "config_flow": true,
+  "documentation": "https://github.com/drtsb/ha-rotel-integration",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/drtsb/ha-rotel-integration/issues",
+  "requirements": [],
+  "ssdp": [
+    { "manufacturer": "Rotel" },
+    { "manufacturer": "ROTEL" },
+    { "manufacturer": "Rotel", "deviceType": "urn:schemas-upnp-org:device:MediaRenderer:1" },
+    { "manufacturer": "Rotel", "deviceType": "urn:schemas-upnp-org:device:MediaServer:1" }
+  ],
+  "zeroconf": [
+    "_rotel._tcp.local.",
+    "_rotel-control._tcp.local.",
+    "_rotel-ra._tcp.local."
+  ],
+  "version": "0.1.0"
+}
