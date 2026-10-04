@@ -4,66 +4,86 @@ This module deliberately has **no Home Assistant imports** so that the wire
 format can be unit-tested in isolation and reused by the RS-232 variant of
 the protocol.
 
-Rotel amplifiers reachable over TCP (port 9500) or RS-232 speak a line based
-ASCII protocol::
+Rotel amplifiers with a network interface expose the very same ASCII command
+set that is documented for the RS-232 port, on TCP port ``9590``::
 
-    -> VOLUME_QUERY\\r\\n
-    <- VOLUME 30\\r\\n
-    -> VOLUME 30\\r\\n        (no answer, or a bare "OK")
+    >>> power?
+    <<< power=on$
+    >>> volume?
+    <<< volume=42$
+    >>> power_on!
+    >>> vol_42!
+    >>> tuner!
+
+Every command is terminated with ``!`` and never carries CR/LF, every reply
+field is terminated with ``$``. A reply may carry several fields at once,
+separated by newlines, and the device may answer unsolicited fields when
+push updates are enabled::
+
+    <<< version=1.24$
+    <<< model=RA-1572$\\nvolume=42$
 
 Models differ in three ways only, and all three are described by
 :class:`RotelModel` so a new device usually needs nothing but a new profile:
 
-* how a volume is encoded on the wire (percent, 0.5 dB steps, raw steps),
-* the numeric value of every input,
-* the volume range and granularity.
+* the command key of every input (and the values the firmware may report for
+  it),
+* how a volume is encoded (raw steps of 0..96 or plain decibel),
+* the volume range and granularity used in Home Assistant.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 
-#: Every command is a single ASCII line terminated by CR LF.
-TERMINATOR = "\r\n"
+#: Terminator of every command sent to the device.
+COMMAND_TERMINATOR = "!"
+
+#: Terminator of every field the device sends.
+RESPONSE_TERMINATOR = "$"
 
 #: Replies a Rotel sends when it does not understand (or refuses) a command.
 NEGATIVE_RESPONSES = frozenset({"?", "no_reply", "error", "nack"})
 
-#: Replies that mean "command accepted", carrying no state.
-ACK_RESPONSES = frozenset({"ok", "ack", "complete"})
+
+class RotelQuery(StrEnum):
+    """Keys that can be asked for with ``<key>?``."""
+
+    POWER = "power"
+    VOLUME = "volume"
+    MUTE = "mute"
+    SOURCE = "source"
+    RECORD_SOURCE = "record_source"
+    MODEL = "model"
+    FIRMWARE = "version"
 
 
 class RotelCommand(StrEnum):
-    """Commands understood by the Rotel ASCII control protocol."""
+    """Commands that change something, sent as ``<command>!``."""
 
-    POWER = "POWER"
-    POWER_QUERY = "POWER_QUERY"
-    VOLUME = "VOLUME"
-    VOLUME_QUERY = "VOLUME_QUERY"
-    MUTE = "MUTE"
-    MUTE_QUERY = "MUTE_QUERY"
-    SOURCE = "SOURCE"
-    SOURCE_QUERY = "SOURCE_QUERY"
-    RECORD_SOURCE = "REC_SELECT"
-    RECORD_SOURCE_QUERY = "REC_SELECT_QUERY"
-    MODEL_QUERY = "MODEL_QUERY"
-    FIRMWARE_QUERY = "FIRMWARE_QUERY"
-    RESET_PANEL = "RESET_PANEL"
+    POWER_ON = "power_on"
+    POWER_OFF = "power_off"
+    MUTE_ON = "mute_on"
+    MUTE_OFF = "mute_off"
+    #: ``vol_<NN>!``, the value is appended with an underscore.
+    VOLUME = "vol"
 
 
 class VolumeScale(StrEnum):
-    """How a volume in dB is turned into the integer sent to the device.
+    """How a volume is turned into the integer sent to the device.
 
-    ``STEPS`` is the default because it round-trips exactly for devices whose
-    front panel steps in 0.5 dB (0..160 for a -60..+20 dB range).  Use
-    ``PERCENT`` only when the firmware reports a 0..100 percentage; note that
-    a percent payload cannot represent every 0.5 dB step.
+    ``STEPS`` is used by the two channel amplifiers (A12/A14/RA-1572 family):
+    they report a raw position of the front panel volume scale instead of a
+    decibel value. ``DB`` is used by the processors, which report decibels
+    directly. ``PERCENT`` covers firmware that reports 0..100.
     """
 
     #: Payload is the offset from ``volume_min_db`` in ``volume_step_db`` units.
     STEPS = "steps"
+    #: Payload is the volume in decibel.
+    DB = "db"
     #: Payload is 0..100 percent of the volume range.
     PERCENT = "percent"
 
@@ -76,14 +96,24 @@ class ProtocolError(Exception):
 class RotelInput:
     """A single input (source) of an amplifier."""
 
+    #: Command sent to the device, e.g. ``coax1`` (``coax1!``).
     value: str
+    #: Label shown in the user interface.
     name: str
     icon: str = "mdi:audio-input"
+    #: Values a firmware revision may report for this input instead of
+    #: ``value``, e.g. ``analog_cd`` for ``cd``.
+    aliases: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:
         """Human readable label shown in the UI."""
         return self.name
+
+    @property
+    def values(self) -> tuple[str, ...]:
+        """Every spelling this input is known under."""
+        return (self.value, *self.aliases)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,16 +122,21 @@ class RotelModel:
 
     key: str
     name: str
-    #: Rotel Base Code reported by ``MODEL_QUERY``, e.g. ``"RA1572"``.
+    #: Model code reported by ``model?``, e.g. ``RA1572``.
     rbc: str
     inputs: tuple[RotelInput, ...]
     record_inputs: tuple[RotelInput, ...] = ()
     volume_min_db: float = -60.0
+    #: Kept at the value the released version used, so upgrading does not
+    #: silently narrow the range of already configured entries. Profiles whose
+    #: hardware differs declare their own bounds.
     volume_max_db: float = 20.0
     volume_step_db: float = 0.5
     volume_scale: VolumeScale = VolumeScale.STEPS
-    #: Number of steps the device reports (used to sanity check replies).
+    #: True for processors with a second zone.
     zone2: bool = False
+    #: Extra queries asked once per connection, e.g. the record source.
+    queries: tuple[RotelQuery, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.volume_max_db <= self.volume_min_db:
@@ -119,21 +154,146 @@ class RotelModel:
         """Amount of discrete volume positions of this model."""
         return round(self.volume_range_db / self.volume_step_db)
 
-    def input_by_value(self, value: str) -> RotelInput | None:
-        """Return the input matching ``value`` (case/space insensitive)."""
-        needle = value.strip().upper()
-        for item in self.inputs:
-            if item.value.upper() == needle:
-                return item
-        return None
 
-    def input_by_name(self, name: str) -> RotelInput | None:
-        """Return the input whose label matches ``name``."""
-        needle = name.strip().casefold()
-        for item in self.inputs:
-            if item.name.casefold() == needle:
-                return item
+def match_input(inputs: Sequence[RotelInput], value: str) -> RotelInput | None:
+    """Return the input of ``inputs`` matching a label or reported value."""
+    needle = value.strip().strip('"').casefold()
+    if not needle:
         return None
+    for item in inputs:
+        if needle in {known.casefold() for known in item.values}:
+            return item
+    for item in inputs:
+        if needle == item.name.casefold():
+            return item
+    return None
+
+
+def _cd() -> RotelInput:
+    """CD input, reported as ``analog_cd`` by some firmware revisions."""
+    return RotelInput("cd", "CD", "mdi:compact-disc", ("analog_cd",))
+
+
+def _tuner() -> RotelInput:
+    """Tuner input."""
+    return RotelInput("tuner", "Tuner", "mdi:radio")
+
+
+def _phono() -> RotelInput:
+    """Phono input."""
+    return RotelInput("phono", "Phono", "mdi:music-note")
+
+
+def _bluetooth() -> RotelInput:
+    """Bluetooth input."""
+    return RotelInput("bluetooth", "Bluetooth", "mdi:bluetooth")
+
+
+def _pcusb() -> RotelInput:
+    """PC-USB input, the command is ``pcusb!`` but reported as ``pc_usb``."""
+    return RotelInput("pcusb", "PC USB", "mdi:usb", ("pc_usb", "usb"))
+
+
+def _aux(index: int) -> RotelInput:
+    """RCA line input ``index``.
+
+    The input is called "Line" on the current models but was exposed as
+    "Aux" before, so the old name stays resolvable for existing scripts.
+    """
+    aliases = ("aux", f"aux {index}", f"aux{index}") if index == 1 else (
+        f"aux {index}",
+        f"aux{index}",
+    )
+    return RotelInput(f"aux{index}", f"Line {index}", "mdi:audio-input", aliases)
+
+
+def _coax(
+    index: int, label: str = "Coax", aliases: tuple[str, ...] = ()
+) -> RotelInput:
+    """Coaxial digital input ``index``."""
+    return RotelInput(f"coax{index}", f"{label} {index}", "mdi:surround-sound", aliases)
+
+
+def _optical(
+    index: int, label: str = "Optical", aliases: tuple[str, ...] = ()
+) -> RotelInput:
+    """Optical input ``index``."""
+    return RotelInput(f"opt{index}", f"{label} {index}", "mdi:surround-sound", aliases)
+
+
+def _xlr(
+    index: int, label: str = "Balanced coax", aliases: tuple[str, ...] = ()
+) -> RotelInput:
+    """Balanced (XLR) input ``index``."""
+    known: tuple[str, ...] = (
+        f"balanced {index}",
+        f"bal_xlr{index}",
+        f"balanced{index}",
+    )
+    if index == 1:
+        # Firmware revisions reporting a single balanced input.
+        known += ("analog_balanced", "balanced")
+    return RotelInput(
+        f"bal_xlr{index}",
+        f"{label} {index}",
+        "mdi:surround-sound",
+        (*known, *aliases),
+    )
+
+
+def _hdmi(index: int) -> RotelInput:
+    """HDMI input ``index``."""
+    return RotelInput(f"hdmi{index}", f"HDMI {index}", "mdi:hdmi")
+
+
+#: Inputs shared by the RCX/RBX processors.
+_PROCESSOR_INPUTS = (
+    _hdmi(1),
+    _hdmi(2),
+    _hdmi(3),
+    _hdmi(4),
+    _coax(1),
+    _coax(2),
+    _optical(1),
+    _optical(2),
+    _xlr(1, "Balanced"),
+    _xlr(2, "Balanced"),
+    _aux(1),
+    _aux(2),
+)
+
+#: The RBX-1500 has two more balanced inputs than the RCX processors.
+_RBX_INPUTS = (
+    _hdmi(1),
+    _hdmi(2),
+    _hdmi(3),
+    _hdmi(4),
+    _coax(1),
+    _coax(2),
+    _optical(1),
+    _optical(2),
+    _xlr(1, "Balanced"),
+    _xlr(2, "Balanced"),
+    _xlr(3, "Balanced"),
+    _xlr(4, "Balanced"),
+    _aux(1),
+    _aux(2),
+)
+
+#: Inputs of the two channel amplifiers with a network interface. The coax
+#: aliases keep the names the released version used ("Coax 1", "Optical 1",
+#: "Balanced") resolvable on the RA-1200, whose input set was renamed.
+_INTEGRATED_INPUTS = (
+    _cd(),
+    _tuner(),
+    _xlr(1),
+    _xlr(2),
+    _coax(1, "Optical coax", (f"coax {1}", f"optical {1}")),
+    _coax(2, "Optical coax", (f"coax {2}", f"optical {2}")),
+    _aux(1),
+    _aux(2),
+    _phono(),
+)
 
 
 ROTEL_MODELS: Mapping[str, RotelModel] = {
@@ -143,180 +303,106 @@ ROTEL_MODELS: Mapping[str, RotelModel] = {
             key="ra1572",
             name="Rotel RA-1572",
             rbc="RA1572",
-            inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("BALANCED COAX1", "Balanced coax 1", "mdi:surround-sound"),
-                RotelInput("BALANCED COAX2", "Balanced coax 2", "mdi:surround-sound"),
-                RotelInput("OPTICAL COAX1", "Optical coax 1", "mdi:surround-sound"),
-                RotelInput("OPTICAL COAX2", "Optical coax 2", "mdi:surround-sound"),
-                RotelInput("LINE1", "Line 1", "mdi:audio-input"),
-                RotelInput("LINE2", "Line 2", "mdi:audio-input"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
-            ),
-            volume_min_db=-60.0,
-            volume_max_db=20.0,
-            volume_step_db=0.5,
+            inputs=_INTEGRATED_INPUTS,
         ),
         RotelModel(
             key="ra1572mkii",
             name="Rotel RA-1572 MkII",
             rbc="RA1572MKII",
-            inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("BALANCED COAX1", "Balanced coax 1", "mdi:surround-sound"),
-                RotelInput("BALANCED COAX2", "Balanced coax 2", "mdi:surround-sound"),
-                RotelInput("OPTICAL COAX1", "Optical coax 1", "mdi:surround-sound"),
-                RotelInput("OPTICAL COAX2", "Optical coax 2", "mdi:surround-sound"),
-                RotelInput("LINE1", "Line 1", "mdi:audio-input"),
-                RotelInput("LINE2", "Line 2", "mdi:audio-input"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
-            ),
-            volume_min_db=-60.0,
-            volume_max_db=20.0,
-            volume_step_db=0.5,
+            inputs=(*_INTEGRATED_INPUTS, _bluetooth(), _pcusb()),
         ),
         RotelModel(
             key="ra1200",
-            name="Rotel RA-1200",
+            name="Rotel RA-1200 MkII",
             rbc="RA1200",
-            inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("AUX1", "Aux 1", "mdi:audio-input"),
-                RotelInput("AUX2", "Aux 2", "mdi:audio-input"),
-                RotelInput("COAX1", "Coax 1", "mdi:surround-sound"),
-                RotelInput("COAX2", "Coax 2", "mdi:surround-sound"),
-                RotelInput("OPTICAL1", "Optical 1", "mdi:surround-sound"),
-                RotelInput("OPTICAL2", "Optical 2", "mdi:surround-sound"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
-                RotelInput("BALANCED", "Balanced", "mdi:surround-sound"),
-            ),
-            volume_min_db=-60.0,
-            volume_max_db=20.0,
-            volume_step_db=0.5,
+            inputs=(*_INTEGRATED_INPUTS, _bluetooth(), _pcusb()),
         ),
         RotelModel(
             key="rcx1570",
-            name="Rotel RCX-1570",
+            name="Rotel RCX-1570 MkII",
             rbc="RCX1570",
             inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("AUX1", "Aux 1", "mdi:audio-input"),
-                RotelInput("AUX2", "Aux 2", "mdi:audio-input"),
-                RotelInput("COAX1", "Coax 1", "mdi:surround-sound"),
-                RotelInput("COAX2", "Coax 2", "mdi:surround-sound"),
-                RotelInput("OPTICAL1", "Optical 1", "mdi:surround-sound"),
-                RotelInput("OPTICAL2", "Optical 2", "mdi:surround-sound"),
-                RotelInput("BALANCED1", "Balanced 1", "mdi:surround-sound"),
-                RotelInput("BALANCED2", "Balanced 2", "mdi:surround-sound"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
-                RotelInput("BLUETOOTH", "Bluetooth", "mdi:bluetooth"),
+                _cd(),
+                _tuner(),
+                _coax(1),
+                _coax(2),
+                _optical(1),
+                _optical(2),
+                _xlr(1, "Balanced"),
+                _xlr(2, "Balanced"),
+                _aux(1),
+                _aux(2),
+                _phono(),
+                _bluetooth(),
+                _pcusb(),
             ),
-            record_inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("AUX1", "Aux 1", "mdi:audio-input"),
-                RotelInput("AUX2", "Aux 2", "mdi:audio-input"),
-            ),
+            record_inputs=(_cd(), _tuner(), _aux(1), _aux(2)),
             volume_min_db=-60.0,
             volume_max_db=20.0,
-            volume_step_db=0.5,
+            volume_scale=VolumeScale.DB,
+            queries=(RotelQuery.RECORD_SOURCE,),
         ),
         RotelModel(
             key="rcx1500",
             name="Rotel RCX-1500",
             rbc="RCX1500",
-            inputs=(
-                RotelInput("HDMI1", "HDMI 1", "mdi:hdmi"),
-                RotelInput("HDMI2", "HDMI 2", "mdi:hdmi"),
-                RotelInput("HDMI3", "HDMI 3", "mdi:hdmi"),
-                RotelInput("HDMI4", "HDMI 4", "mdi:hdmi"),
-                RotelInput("COAX1", "Coax 1", "mdi:surround-sound"),
-                RotelInput("COAX2", "Coax 2", "mdi:surround-sound"),
-                RotelInput("OPTICAL1", "Optical 1", "mdi:surround-sound"),
-                RotelInput("OPTICAL2", "Optical 2", "mdi:surround-sound"),
-                RotelInput("BALANCED1", "Balanced 1", "mdi:surround-sound"),
-                RotelInput("BALANCED2", "Balanced 2", "mdi:surround-sound"),
-                RotelInput("LINE1", "Line 1", "mdi:audio-input"),
-                RotelInput("LINE2", "Line 2", "mdi:audio-input"),
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
-            ),
-            record_inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-            ),
+            inputs=(*_PROCESSOR_INPUTS, _cd(), _tuner(), _phono(), _bluetooth()),
+            record_inputs=(_cd(), _tuner()),
             volume_min_db=-80.0,
             volume_max_db=20.0,
-            volume_step_db=0.5,
+            volume_scale=VolumeScale.DB,
             zone2=True,
+            queries=(RotelQuery.RECORD_SOURCE,),
         ),
         RotelModel(
             key="rbx1500",
             name="Rotel RBX-1500",
             rbc="RBX1500",
-            inputs=(
-                RotelInput("HDMI1", "HDMI 1", "mdi:hdmi"),
-                RotelInput("HDMI2", "HDMI 2", "mdi:hdmi"),
-                RotelInput("HDMI3", "HDMI 3", "mdi:hdmi"),
-                RotelInput("HDMI4", "HDMI 4", "mdi:hdmi"),
-                RotelInput("COAX1", "Coax 1", "mdi:surround-sound"),
-                RotelInput("COAX2", "Coax 2", "mdi:surround-sound"),
-                RotelInput("OPTICAL1", "Optical 1", "mdi:surround-sound"),
-                RotelInput("OPTICAL2", "Optical 2", "mdi:surround-sound"),
-                RotelInput("BALANCED1", "Balanced 1", "mdi:surround-sound"),
-                RotelInput("BALANCED2", "Balanced 2", "mdi:surround-sound"),
-                RotelInput("BALANCED3", "Balanced 3", "mdi:surround-sound"),
-                RotelInput("BALANCED4", "Balanced 4", "mdi:surround-sound"),
-                RotelInput("LINE1", "Line 1", "mdi:audio-input"),
-                RotelInput("LINE2", "Line 2", "mdi:audio-input"),
-            ),
+            inputs=(*_RBX_INPUTS, _cd(), _tuner(), _bluetooth()),
             volume_min_db=-80.0,
             volume_max_db=20.0,
-            volume_step_db=0.5,
+            volume_scale=VolumeScale.DB,
         ),
         RotelModel(
             key="rca10",
             name="Rotel RCA-10",
             rbc="RCA10",
             inputs=(
-                RotelInput("HDMI1", "HDMI 1", "mdi:hdmi"),
-                RotelInput("HDMI2", "HDMI 2", "mdi:hdmi"),
-                RotelInput("OPTICAL1", "Optical 1", "mdi:surround-sound"),
-                RotelInput("COAX1", "Coax 1", "mdi:surround-sound"),
-                RotelInput("BALANCED", "Balanced", "mdi:surround-sound"),
-                RotelInput("LINE1", "Line 1", "mdi:audio-input"),
-                RotelInput("LINE2", "Line 2", "mdi:audio-input"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
+                _hdmi(1),
+                _hdmi(2),
+                _optical(1),
+                _coax(1),
+                _xlr(1, "Balanced"),
+                _aux(1),
+                _aux(2),
+                _phono(),
+                _bluetooth(),
+                _pcusb(),
             ),
             volume_min_db=-60.0,
             volume_max_db=20.0,
-            volume_step_db=0.5,
+            volume_scale=VolumeScale.DB,
         ),
-        # Generic fallback for unknown Rotel devices: percent volume,
-        # 0.5 dB steps, common Rotel input naming.
+        # Generic fallback for unknown Rotel devices: raw 0..96 volume scale,
+        # common Rotel input naming.
         RotelModel(
             key="generic",
             name="Rotel (generic)",
             rbc="",
             inputs=(
-                RotelInput("CD", "CD", "mdi:compact-disc"),
-                RotelInput("TUNER", "Tuner", "mdi:radio"),
-                RotelInput("AUX1", "Aux 1", "mdi:audio-input"),
-                RotelInput("AUX2", "Aux 2", "mdi:audio-input"),
-                RotelInput("COAX", "Coax", "mdi:surround-sound"),
-                RotelInput("OPTICAL", "Optical", "mdi:surround-sound"),
-                RotelInput("BALANCED", "Balanced", "mdi:surround-sound"),
-                RotelInput("PHONO", "Phono", "mdi:music-note"),
-                RotelInput("BLUETOOTH", "Bluetooth", "mdi:bluetooth"),
+                _cd(),
+                _tuner(),
+                _coax(1),
+                _coax(2),
+                _optical(1),
+                _optical(2),
+                _aux(1),
+                _aux(2),
+                _phono(),
+                _bluetooth(),
+                _pcusb(),
+                _xlr(1, "Balanced"),
             ),
-            volume_min_db=-60.0,
-            volume_max_db=20.0,
-            volume_step_db=0.5,
         ),
     )
 }
@@ -330,7 +416,7 @@ def get_model(key: str | None) -> RotelModel:
 
 
 def detect_model(rbc: str | None) -> RotelModel | None:
-    """Return the profile whose RBC matches ``rbc`` (case insensitive)."""
+    """Return the profile whose model code matches ``rbc``."""
     if not rbc:
         return None
     needle = rbc.strip().upper().replace("-", "").replace(" ", "")
@@ -340,14 +426,79 @@ def detect_model(rbc: str | None) -> RotelModel | None:
     return None
 
 
+# --- command building ---------------------------------------------------
+
+
+def build_query(key: RotelQuery | str) -> str:
+    """Build a query line, e.g. ``power?``."""
+    return f"{key}?"
+
+
 def build_command(command: RotelCommand | str, value: object | None = None) -> str:
-    """Build a single command line (without terminator)."""
-    base = str(command)
+    """Build a command line, e.g. ``power_on!`` or ``vol_42!``."""
     if value is None:
-        return base
-    if isinstance(value, bool):
-        return f"{base} {'on' if value else 'off'}"
-    return f"{base} {value}"
+        return f"{command}{COMMAND_TERMINATOR}"
+    return f"{command}_{value}{COMMAND_TERMINATOR}"
+
+
+def source_command(value: str) -> str:
+    """Build the line that selects an input, e.g. ``coax1!``."""
+    return f"{value}{COMMAND_TERMINATOR}"
+
+
+# --- reply parsing ------------------------------------------------------
+
+
+def parse_message(chunk: str) -> dict[str, str]:
+    """Parse one ``$`` terminated chunk into ``{key: value}``.
+
+    A chunk may carry several newline separated fields. Replies without an
+    ``=`` (the ``?`` a device sends for an unknown command) are ignored.
+    """
+    values: dict[str, str] = {}
+    for line in chunk.replace(COMMAND_TERMINATOR, "").splitlines():
+        line = line.strip().strip('"').strip()
+        if not line or line.casefold() in NEGATIVE_RESPONSES or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip().casefold()] = value.strip()
+    return values
+
+
+def parse_messages(buffer: str) -> tuple[dict[str, str], str]:
+    """Split a raw buffer into ``({key: value}, unparsed remainder)``.
+
+    Everything up to the last ``$`` is parsed, so a reply that arrives in
+    several TCP segments is never truncated.
+    """
+    head, separator, tail = buffer.rpartition(RESPONSE_TERMINATOR)
+    if not separator:
+        return {}, buffer
+    values: dict[str, str] = {}
+    for chunk in head.split(RESPONSE_TERMINATOR):
+        values.update(parse_message(chunk))
+    return values, tail
+
+
+def parse_on_off(value: str) -> bool:
+    """Parse the many spellings Rotel uses for booleans."""
+    token = value.strip().strip('"').casefold()
+    if token in {"1", "on", "true", "yes"}:
+        return True
+    if token in {"0", "off", "false", "no", "standby"}:
+        return False
+    raise ProtocolError(f"Unexpected boolean value: {value!r}")
+
+
+def parse_source(
+    payload: str, model: RotelModel, *, record: bool = False
+) -> RotelInput:
+    """Resolve a reported input value to a :class:`RotelInput`."""
+    inputs = model.record_inputs if record else model.inputs
+    if (found := match_input(inputs, payload)) is not None:
+        return found
+    known = ", ".join(item.name for item in inputs)
+    raise ProtocolError(f"Unknown input {payload!r} for {model.name}. Known: {known}")
 
 
 # --- volume -------------------------------------------------------------
@@ -361,125 +512,103 @@ def clamp_volume(volume_db: float, model: RotelModel) -> float:
 def snap_volume(volume_db: float, model: RotelModel) -> float:
     """Clamp and round ``volume_db`` to a position the device can hold."""
     clamped = clamp_volume(volume_db, model)
-    offset = clamped - model.volume_min_db
-    steps = round(offset / model.volume_step_db)
+    steps = round((clamped - model.volume_min_db) / model.volume_step_db)
     snapped = model.volume_min_db + steps * model.volume_step_db
     # Guard against floating point drift such as -60.00000000000001.
     return round(snapped, 2)
 
 
-def volume_to_payload(volume_db: float, model: RotelModel) -> int:
-    """Encode a volume in dB as the integer expected by the device."""
+def volume_to_payload(volume_db: float, model: RotelModel) -> int | float:
+    """Encode a volume in dB as the value expected by the device."""
     snapped = snap_volume(volume_db, model)
     if model.volume_scale is VolumeScale.STEPS:
         return round((snapped - model.volume_min_db) / model.volume_step_db)
+    if model.volume_scale is VolumeScale.DB:
+        return round(snapped, 2)
     percent = (snapped - model.volume_min_db) / model.volume_range_db * 100
-    return int(round(percent))
+    return round(percent)
 
 
-def volume_payload_range(model: RotelModel) -> tuple[int, int]:
+def volume_payload_range(model: RotelModel) -> tuple[float, float]:
     """Return the inclusive range of volume payloads ``model`` understands."""
     if model.volume_scale is VolumeScale.STEPS:
         return 0, model.volume_steps
+    if model.volume_scale is VolumeScale.DB:
+        return model.volume_min_db, model.volume_max_db
     return 0, 100
 
 
-def volume_from_payload(payload: int | float, model: RotelModel) -> float:
-    """Decode the integer reported by the device back to dB."""
+def volume_from_payload(payload: float | str, model: RotelModel) -> float:
+    """Decode the volume reported by the device back to dB."""
+    if isinstance(payload, str):
+        # Some firmware quotes the value: "42" and 42 must both parse.
+        payload = payload.strip().strip('"').strip()
+        if payload.casefold() == "max":
+            return model.volume_max_db
+        if payload.casefold() == "min":
+            return model.volume_min_db
+    value = float(payload)
     if model.volume_scale is VolumeScale.STEPS:
-        raw = model.volume_min_db + float(payload) * model.volume_step_db
+        if value < 0:
+            # Firmware that reports decibels on a model configured for the
+            # raw 0..96 scale of the front panel.
+            return snap_volume(value, model)
+        raw = model.volume_min_db + value * model.volume_step_db
+    elif model.volume_scale is VolumeScale.DB:
+        raw = value
     else:
-        percent = min(max(float(payload), 0.0), 100.0)
+        percent = min(max(value, 0.0), 100.0)
         raw = model.volume_min_db + (percent / 100.0) * model.volume_range_db
     return snap_volume(raw, model)
 
 
-# --- reply parsing ------------------------------------------------------
+def parse_volume_number(payload: str) -> float | None:
+    """Return the numeric volume of a reply.
 
-
-def strip_echo(line: str, command: str | None = None) -> str:
-    """Remove CRLF, a duplicated command prefix and stray quotes."""
-    cleaned = line.strip().strip('"').strip()
-    if command and cleaned.upper().startswith(f"{command.upper()} "):
-        cleaned = cleaned[len(command) + 1 :].strip()
-    elif command and cleaned.upper() == command.upper():
-        return ""
-    return cleaned
-
-
-def is_ack(line: str) -> bool:
-    """Return True for acknowledgements that carry no state."""
-    return line.strip().strip('"').casefold() in ACK_RESPONSES
-
-
-def parse_on_off(value: str) -> bool:
-    """Parse the many spellings Rotel uses for booleans."""
-    token = value.strip().strip('"').casefold()
-    if token in {"1", "on", "true", "yes", "standby_off"}:
-        return True
-    if token in {"0", "off", "false", "no", "standby"}:
-        return False
-    raise ProtocolError(f"Unexpected boolean value: {value!r}")
-
-
-def parse_command(line: str) -> tuple[str, str] | None:
-    """Split a reply into ``(command, payload)``.
-
-    Returns ``None`` for empty lines, echoes of our own command and
-    acknowledgements, so callers can simply keep reading.
+    ``None`` for the ``max``/``min`` sentinels and for anything that is not a
+    number, so callers can tell a real position from a firmware keyword.
     """
-    cleaned = line.strip().strip('"')
-    if not cleaned or is_ack(cleaned) or cleaned == "?":
+    try:
+        return float(payload.strip().strip('"'))
+    except ValueError:
         return None
-    command, _, payload = cleaned.partition(" ")
-    return command.strip().upper(), payload.strip()
 
 
-def parse_source(payload: str, model: RotelModel, *, record: bool = False) -> RotelInput:
-    """Resolve a reported input value to a :class:`RotelInput`."""
-    inputs = model.record_inputs if record else model.inputs
-    needle = payload.strip().strip('"')
-    for item in inputs:
-        if item.value.upper() == needle.upper():
-            return item
-    # Some firmware revisions report the label instead of the protocol value.
-    for item in inputs:
-        if item.name.casefold() == needle.casefold():
-            return item
-    raise ProtocolError(f"Unknown input {payload!r} for {model.name}")
-
-
-def source_payload(value: str, model: RotelModel, *, record: bool = False) -> str:
-    """Return the protocol value for an input label or value."""
-    inputs = model.record_inputs if record else model.inputs
-    for item in inputs:
-        if value.casefold() in {item.value.casefold(), item.name.casefold()}:
-            return item.value
-    raise ProtocolError(f"Unknown input {value!r} for {model.name}")
+def volume_is_out_of_range(payload: object, model: RotelModel) -> bool:
+    """True when a reported volume cannot belong to ``model``."""
+    if not isinstance(payload, (int, float)) or isinstance(payload, bool):
+        # Sentinels such as "max"/"min" and anything unexpected.
+        return False
+    lowest, highest = volume_payload_range(model)
+    return not lowest <= payload <= highest
 
 
 __all__ = (
-    "ACK_RESPONSES",
+    "COMMAND_TERMINATOR",
     "NEGATIVE_RESPONSES",
+    "RESPONSE_TERMINATOR",
     "ROTEL_MODELS",
-    "TERMINATOR",
     "ProtocolError",
     "RotelCommand",
     "RotelInput",
     "RotelModel",
+    "RotelQuery",
     "VolumeScale",
     "build_command",
+    "build_query",
     "clamp_volume",
     "detect_model",
     "get_model",
-    "is_ack",
-    "parse_command",
+    "match_input",
+    "parse_message",
+    "parse_messages",
     "parse_on_off",
     "parse_source",
+    "parse_volume_number",
     "snap_volume",
-    "source_payload",
-    "strip_echo",
+    "source_command",
     "volume_from_payload",
+    "volume_is_out_of_range",
     "volume_payload_range",
     "volume_to_payload",
 )

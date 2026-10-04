@@ -11,13 +11,18 @@
   "ssdp": [
     { "manufacturer": "Rotel" },
     { "manufacturer": "ROTEL" },
+    { "manufacturer": "Rotel Corporation" },
+    { "manufacturer": "Rotel Co.,Ltd." },
+    { "manufacturer": "Rotel Co., Ltd." },
+    { "manufacturer": "Rotel Corporation." },
     { "manufacturer": "Rotel", "deviceType": "urn:schemas-upnp-org:device:MediaRenderer:1" },
-    { "manufacturer": "Rotel", "deviceType": "urn:schemas-upnp-org:device:MediaServer:1" }
+    { "manufacturer": "Rotel", "deviceType": "urn:schemas-upnp-org:device:MediaServer:1" },
+    { "manufacturer": "Rotel", "st": "upnp:rootdevice" }
   ],
   "zeroconf": [
     "_rotel._tcp.local.",
     "_rotel-control._tcp.local.",
     "_rotel-ra._tcp.local."
   ],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

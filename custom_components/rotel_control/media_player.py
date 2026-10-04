@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
     MediaPlayerEntityDescription,
@@ -100,11 +102,14 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         return [item.name for item in self.coordinator.model.inputs]
 
     @property
-    def extra_state_attributes(self) -> dict[str, str]:
-        """Expose the record source of pre-out capable models."""
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the raw volume and the record source of pre-out models."""
+        attributes: dict[str, Any] = {}
+        if self.data.volume_raw is not None:
+            attributes["volume_raw"] = self.data.volume_raw
         if (record := self.data.record_source) and self.coordinator.model.record_inputs:
-            return {"record_source": record.name}
-        return {}
+            attributes["record_source"] = record.name
+        return attributes
 
     # --- commands --------------------------------------------------------
 
@@ -136,7 +141,7 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         if (current := self.data.volume_db) is None:
             # Nothing known yet: ask for a snapshot and retry once.
             await self.coordinator.async_request_refresh()
-            if (current := self.coordinator.data.volume_db) is None:
+            if (current := self.data.volume_db) is None:
                 return
         target = snap_volume(
             current + direction * model.volume_step_db, model

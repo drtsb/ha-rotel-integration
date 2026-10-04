@@ -3,6 +3,9 @@
 # so both are installed together.
 homeassistant==2025.1.4
 pytest-homeassistant-custom-component==0.13.205
+# Requirement of the Home Assistant ssdp component, needed to build the
+# SsdpServiceInfo objects of the discovery tests.
+async-upnp-client>=0.36
 pytest>=8.0
 pytest-asyncio>=0.24
 ruff>=0.6

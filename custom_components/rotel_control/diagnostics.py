@@ -17,7 +17,7 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: RotelCoordinator = hass.data[DOMAIN][entry.entry_id]
-    data = coordinator.data
+    data = coordinator.known_state
     return {
         "entry": {
             "data": dict(entry.data),
@@ -44,6 +44,7 @@ async def async_get_config_entry_diagnostics(
         "state": {
             "power": data.power,
             "volume_db": data.volume_db,
+            "volume_raw": data.volume_raw,
             "mute": data.mute,
             "source": data.source.value if data.source else None,
             "record_source": data.record_source.value if data.record_source else None,
@@ -51,6 +52,7 @@ async def async_get_config_entry_diagnostics(
             "model": data.device_model,
             "unsupported_queries": sorted(data.unsupported),
         },
+        "reported": coordinator.api.values,
         "repr": repr(coordinator.api),
         "asdict": asdict(data),
     }
