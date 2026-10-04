@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Self
 
@@ -31,20 +32,31 @@ from .const import (
 )
 from .protocol import (
     RESPONSE_TERMINATOR,
+    TONE_BYPASS_QUERIES,
     ProtocolError,
     RotelCommand,
     RotelInput,
     RotelModel,
     RotelQuery,
+    balance_command,
     build_command,
     build_query,
+    clamp_balance,
+    clamp_dimmer,
+    clamp_tone,
+    dimmer_command,
     match_input,
+    parse_balance,
+    parse_dimmer,
     parse_messages,
     parse_on_off,
     parse_source,
+    parse_speakers,
+    parse_tone,
     parse_volume_number,
     snap_volume,
     source_command,
+    tone_command,
     volume_from_payload,
     volume_is_out_of_range,
     volume_payload_range,
@@ -63,6 +75,15 @@ SOURCE = str(RotelQuery.SOURCE)
 RECORD_SOURCE = str(RotelQuery.RECORD_SOURCE)
 MODEL = str(RotelQuery.MODEL)
 FIRMWARE = str(RotelQuery.FIRMWARE)
+BASS = str(RotelQuery.BASS)
+TREBLE = str(RotelQuery.TREBLE)
+BALANCE = str(RotelQuery.BALANCE)
+SPEAKER = str(RotelQuery.SPEAKER)
+DIMMER = str(RotelQuery.DIMMER)
+
+#: The tone bypass switch is ``bypass`` on current firmware and ``tone`` on
+#: older ones; the key the device answered is remembered per connection.
+TONE_KEYS: tuple[str, ...] = tuple(str(key) for key in TONE_BYPASS_QUERIES)
 
 #: Fields every amplifier reports; anything else is optional.
 CORE_FIELDS: frozenset[str] = frozenset({POWER, VOLUME, MUTE, SOURCE})
@@ -116,6 +137,17 @@ class RotelStatus:
     firmware: str | None = None
     #: Raw volume as reported by the device (front panel scale).
     volume_raw: str | None = None
+    #: Tone block, in decibel, and the balance in L01..L15/R01..R15 steps.
+    bass_db: int | None = None
+    treble_db: int | None = None
+    balance: int | None = None
+    #: True while the tone block is bypassed.
+    tone_bypass: bool | None = None
+    #: Speaker groups that are switched on.
+    speaker_a: bool | None = None
+    speaker_b: bool | None = None
+    #: Front display brightness, ``DIMMER_MIN`` is the brightest.
+    dimmer: int | None = None
     #: Query names that the firmware did not answer.
     unsupported: frozenset[str] = field(default_factory=frozenset)
 
@@ -152,6 +184,8 @@ class RotelApi:
         self._asked: set[str] = set()
         #: Last volume we successfully applied, used for the power interlock.
         self._last_volume_db: float | None = None
+        #: Which of ``TONE_KEYS`` this firmware answers, ``None`` until told.
+        self._tone_key: str | None = None
 
     @property
     def host(self) -> str:
@@ -237,6 +271,7 @@ class RotelApi:
         # "Asked once" is a per-connection promise: a connection that failed
         # before the device answered must be asked again on the next one.
         self._asked.clear()
+        self._tone_key = None
         if writer is None:
             return
         writer.close()
@@ -388,8 +423,11 @@ class RotelApi:
                 LOGGER.debug("Rotel <<< %s", values)
                 received.update(values)
                 self._values.update(_limit_values(values))
-                # The device is still talking: keep waiting for the rest.
-                idle_until = loop.time() + timeout
+            # The device is still talking: keep waiting for the rest. This
+            # counts every chunk, including a "?" a device sends for a query
+            # it does not know — otherwise an unsupported query would cut the
+            # burst short and drop the fields that follow it.
+            idle_until = loop.time() + timeout
 
     async def _async_command(self, line: str) -> None:
         """Send a command and keep the late fields it may trigger."""
@@ -440,9 +478,17 @@ class RotelApi:
         received = await self._async_exchange(
             [f"{name}?" for name in sorted(wanted)], required={POWER}
         )
+        # The tone bypass is answered under one of two names. Whichever the
+        # firmware reports is remembered as the one its commands have to use,
+        # so the switch works on old and current units alike.
+        answered_tone = next((key for key in TONE_KEYS if received.get(key)), None)
+        if answered_tone is not None:
+            self._tone_key = answered_tone
         # Fields that did not arrive must not keep a stale value of an older
         # poll, and an unanswered optional query is remembered as unsupported.
         for name in optional:
+            if name in TONE_KEYS and answered_tone is not None:
+                continue
             if name not in received:
                 unsupported.add(name)
                 self._values.pop(name, None)
@@ -472,6 +518,23 @@ class RotelApi:
         if (record := received.get(RECORD_SOURCE)) is not None:
             with contextlib.suppress(ProtocolError):
                 status.record_source = parse_source(record, self._model, record=True)
+
+        if (bass := received.get(BASS)) is not None:
+            status.bass_db = self._parse_field(parse_tone, bass, "bass")
+        if (treble := received.get(TREBLE)) is not None:
+            status.treble_db = self._parse_field(parse_tone, treble, "treble")
+        if (balance := received.get(BALANCE)) is not None:
+            status.balance = self._parse_field(parse_balance, balance, "balance")
+        if answered_tone is not None:
+            status.tone_bypass = self._parse_field(
+                parse_on_off, received[answered_tone], answered_tone
+            )
+        if (speaker := received.get(SPEAKER)) is not None:
+            groups = self._parse_field(parse_speakers, speaker, SPEAKER)
+            if groups is not None:
+                status.speaker_a, status.speaker_b = groups
+        if (dimmer := received.get(DIMMER)) is not None:
+            status.dimmer = self._parse_field(parse_dimmer, dimmer, DIMMER)
 
         status.model = self._values.get(MODEL)
         status.firmware = self._values.get(FIRMWARE)
@@ -532,6 +595,68 @@ class RotelApi:
         self._values[RECORD_SOURCE] = resolved.value
         return resolved
 
+    # --- tone controls ---------------------------------------------------
+
+    async def async_set_tone(self, command: RotelCommand, value: float) -> int:
+        """Set bass or treble and return the number of dB the device accepted."""
+        if command is RotelCommand.BASS:
+            field = BASS
+        elif command is RotelCommand.TREBLE:
+            field = TREBLE
+        else:
+            raise ValueError(f"{command} is not a tone control")
+        clamped = clamp_tone(value)
+        await self._async_command(tone_command(command, clamped))
+        self._values[field] = f"{clamped:+03d}" if clamped else "000"
+        return clamped
+
+    async def async_set_balance(self, balance: float) -> int:
+        """Set the channel balance and return the value the device accepted.
+
+        Negative is left, positive is right, ``0`` re-centres it.
+        """
+        clamped = clamp_balance(balance)
+        await self._async_command(balance_command(clamped))
+        self._values[BALANCE] = (
+            "000" if not clamped else f"{'L' if clamped < 0 else 'R'}{abs(clamped):02d}"
+        )
+        return clamped
+
+    async def async_set_tone_bypass(self, bypass: bool) -> bool:
+        """Bypass or re-enable the tone block."""
+        key = self._tone_key or TONE_KEYS[0]
+        await self._async_command(f"{key}_{'on' if bypass else 'off'}!")
+        self._values[key] = "on" if bypass else "off"
+        return bypass
+
+    async def async_set_speaker(self, group: str, enabled: bool) -> bool:
+        """Switch one speaker group on or off.
+
+        The device reports the *result* of the change (``speaker=a``, ``b``,
+        ``a_b`` or ``off``), and this optimistic value assumes the command was
+        accepted; the next poll corrects it either way.
+        """
+        token = group.strip().casefold()
+        if token not in self._model.speaker_groups:
+            raise RotelApiProtocolError(
+                f"{self._model.name} has no speaker group {group!r}"
+            )
+        command = {
+            ("a", True): RotelCommand.SPEAKER_A_ON,
+            ("a", False): RotelCommand.SPEAKER_A_OFF,
+            ("b", True): RotelCommand.SPEAKER_B_ON,
+            ("b", False): RotelCommand.SPEAKER_B_OFF,
+        }[(token, enabled)]
+        await self._async_command(build_command(command))
+        return enabled
+
+    async def async_set_dimmer(self, level: float) -> int:
+        """Set the front display brightness (``0`` is the brightest)."""
+        clamped = clamp_dimmer(level)
+        await self._async_command(dimmer_command(clamped))
+        self._values[DIMMER] = str(clamped)
+        return clamped
+
     async def async_validate(self) -> dict[str, Any]:
         """Validate the connection and return basic device information."""
         await self.async_connect()
@@ -586,6 +711,20 @@ class RotelApi:
             return volume_from_payload(payload, self._model)
         except (TypeError, ValueError) as err:
             raise RotelApiProtocolError(f"Expected a volume, got {payload!r}") from err
+
+    @staticmethod
+    def _parse_field[T](parser: Callable[[str], T], payload: str, name: str) -> T | None:
+        """Decode an optional field, ignoring a reply we cannot interpret.
+
+        A firmware that answers something unexpected for one tone control must
+        not cost the amplifier its state, so the field simply stays unknown and
+        the matching entity reports itself as unavailable.
+        """
+        try:
+            return parser(payload)
+        except (ProtocolError, TypeError, ValueError) as err:
+            LOGGER.debug("Unexpected %s reply %r: %s", name, payload, err)
+            return None
 
     def _require_source(
         self, source: str, model: RotelModel, *, record: bool = False

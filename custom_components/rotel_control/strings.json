@@ -56,10 +56,12 @@
         "title": "Rotel amplifier options",
         "data": {
           "poll_interval": "Polling interval (seconds)",
-          "model_profile": "Model"
+          "model_profile": "Model",
+          "inputs": "Inputs"
         },
         "data_description": {
-          "poll_interval": "How often the amplifier is asked for its state. Keep it at 2 s unless you see problems on the network."
+          "poll_interval": "How often the amplifier is asked for its state. Keep it at 2 s unless you see problems on the network.",
+          "inputs": "Only keep the inputs this amplifier has. Leave the selection untouched to use the inputs of the chosen model."
         }
       }
     }
@@ -73,6 +75,15 @@
     "number": {
       "volume_db": {
         "name": "Volume"
+      },
+      "bass": {
+        "name": "Bass"
+      },
+      "treble": {
+        "name": "Treble"
+      },
+      "balance": {
+        "name": "Balance"
       }
     },
     "select": {
@@ -81,6 +92,18 @@
       },
       "record_input": {
         "name": "Record input"
+      },
+      "display_dimmer": {
+        "name": "Display brightness",
+        "state": {
+          "0": "Brightest",
+          "1": "1",
+          "2": "2",
+          "3": "3",
+          "4": "4",
+          "5": "5",
+          "6": "Dimmest"
+        }
       }
     },
     "sensor": {
@@ -92,6 +115,45 @@
       },
       "protocol": {
         "name": "Control connection"
+      }
+    },
+    "switch": {
+      "speakers_a": {
+        "name": "Speakers A"
+      },
+      "speakers_b": {
+        "name": "Speakers B"
+      },
+      "tone_bypass": {
+        "name": "Tone bypass"
+      }
+    }
+  },
+  "selector": {
+    "inputs": {
+      "options": {
+        "cd": "CD",
+        "tuner": "Tuner",
+        "phono": "Phono",
+        "coax1": "Coax 1",
+        "coax2": "Coax 2",
+        "opt1": "Optical 1",
+        "opt2": "Optical 2",
+        "aux": "Aux",
+        "bal_xlr": "Balanced (BAL)",
+        "usb": "USB",
+        "pcusb": "PC-USB",
+        "bluetooth": "Bluetooth",
+        "aux1": "Aux 1",
+        "aux2": "Aux 2",
+        "bal_xlr1": "Balanced 1",
+        "bal_xlr2": "Balanced 2",
+        "bal_xlr3": "Balanced 3",
+        "bal_xlr4": "Balanced 4",
+        "hdmi1": "HDMI 1",
+        "hdmi2": "HDMI 2",
+        "hdmi3": "HDMI 3",
+        "hdmi4": "HDMI 4"
       }
     }
   }

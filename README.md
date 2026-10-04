@@ -7,22 +7,33 @@ Supported out of the box (profiles can be extended, see below):
 
 | Profile | Model | Inputs | Record source |
 | --- | --- | --- | --- |
-| `ra1572` | Rotel RA-1572 | CD, Tuner, Balanced coax 1/2, Optical coax 1/2, Line 1/2, Phono | – |
+| `ra1572` | Rotel RA-1572 | CD, Tuner, Balanced, Optical Coax 1/2, Line 1/2, Phono | – |
 | `ra1572mkii` | Rotel RA-1572 MkII | as RA-1572 plus PC USB and Bluetooth | – |
 | `ra1200` | Rotel RA-1200 MkII | as RA-1572 plus PC USB and Bluetooth | – |
-| `rcx1570` | Rotel RCX-1570 MkII | CD, Tuner, Coax, Optical, Balanced, Line, Phono, PC USB, Bluetooth | yes |
+| `rcx1570` | Rotel RCX-1570 MkII | CD, Tuner, Coax, Optical, Balanced 1/2, Line, Phono, PC USB, Bluetooth | yes |
 | `rcx1500` | Rotel RCX-1500 | HDMI 1–4, Coax, Optical, Balanced 1/2, Line, CD, Tuner, Phono, Bluetooth | yes |
 | `rbx1500` | Rotel RBX-1500 | HDMI 1–4, Coax, Optical, Balanced 1–4, Line, CD, Tuner, Bluetooth | – |
 | `rca10` | Rotel RCA-10 | HDMI 1/2, Optical, Coax, Balanced, Line, Phono, PC USB, Bluetooth | – |
-| `generic` | Unknown Rotel | common Rotel naming | – |
+| `generic` | Unknown Rotel | CD, Tuner, Phono, Coax, Optical, Aux, Balanced, USB, PC USB, Bluetooth | – |
+
+Every input of every profile comes from the catalogue in
+`custom_components/rotel_control/const.py`, so a name means the same thing on
+every device — and the **Inputs** option trims the list down to what your unit
+actually has (see below).
 
 ## Features
 
 * **Media player**: power (with the Rotel power interlock), volume, mute,
   input selection.
-* **Number**: precise volume in dB (0.5 dB steps) next to the 0–100 % slider.
-* **Select**: input selection (and record source for RCX models, disabled by
-  default because only pre-out capable setups need it).
+* **Number**: precise volume in dB (0.5 dB steps) next to the 0–100 % slider,
+  plus **Bass** and **Treble** (±10 dB, 1 dB steps) and **Balance**
+  (−15…+15, left is negative).
+* **Select**: input selection, **display brightness** (`dimmer_0!` is the
+  brightest, `dimmer_6!` the dimmest) and, for RCX models, the record source
+  (disabled by default because only pre-out capable setups need it).
+* **Switch**: **Speakers A** and **Speakers B** (`speaker_a_on!` and friends,
+  never the toggling form, so no race with a change made on the device), and
+  **Tone bypass**.
 * **Sensors**: control-connection health, device model (both diagnostic), and
   the firmware version (disabled by default).
 * **Config flow**: host/port entry with live verification of the protocol,
@@ -32,6 +43,9 @@ Supported out of the box (profiles can be extended, see below):
   is verified against the protocol and the answering port is pre-filled.
 * **Diagnostics**: download of the profile, connection state and the last
   snapshot for bug reports.
+* **Logo**: `custom_components/rotel_control/brand/` carries the icon and the
+  logo, so the setup dialog and the integration page are not blank. See
+  [Brand assets](#brand-assets).
 
 ## Installation
 
@@ -71,6 +85,15 @@ Options (gear icon on the integration card):
 | --- | --- | --- |
 | Polling interval | `2` s | How often the state is polled (1–300 s) |
 | Model | as configured | Switch profile without re-adding the device |
+| Inputs | the ones of the model | Keep only the inputs your amplifier has |
+
+**Inputs** is the escape hatch for a unit whose front panel differs from its
+profile: it takes the protocol values of the catalogue (`coax1`, `bal_xlr`, …),
+accepts the labels shown in the interface, and the selection is what the media
+player and the input select then offer. Leave it alone to use the profile as
+it is. The integrated amplifiers have a *single* balanced input, reported by
+the hardware as `bal_xlr`; profiles for processors with several XLR inputs
+(`bal_xlr1`…`bal_xlr4`) keep the numbering.
 
 The control protocol does **not** push state changes, so the integration polls
 the amplifier. Rotel units are polled at 2 s by default; raise the interval if
@@ -99,6 +122,14 @@ with `$`.
 <<< source=tuner$
 >>> power_on!
 <<< power=on$
+>>> bass_-04!
+<<< bass=-04$
+>>> balance_l02!
+<<< balance=L02$
+>>> speaker_b_on!
+<<< speaker=a_b$
+>>> dimmer_3!
+<<< dimmer=3$
 ```
 
 Notes on the implementation:
@@ -138,20 +169,86 @@ RCX/RBX processors). A profile declares which one it is:
 A negative volume on a `STEPS` profile is read as decibel, and a volume outside
 the expected range is logged with a warning naming the profile.
 
+### Tone controls
+
+The tone block, the speaker relays and the front display dimmer are polled
+together with the rest of the state and only need a query to be answered
+once, so they stay in sync without extra traffic per entity:
+
+| Entity | Command | Reply |
+| --- | --- | --- |
+| Bass / Treble | `bass_000!`, `bass_+05!`, `bass_-10!` (and `treble_`) | `bass=+05$`, `treble=000$` |
+| Balance | `balance_000!`, `balance_l15!`, `balance_r03!` | `balance=L15$`, `balance=000$` |
+| Tone bypass | `bypass_on!` / `bypass_off!` | `bypass=on$` |
+| Speakers A/B | `speaker_a_on!`, `speaker_a_off!`, `speaker_b_on!`, `speaker_b_off!` | `speaker=a$`, `speaker=a_b$`, `speaker=off$` |
+| Display brightness | `dimmer_0!` … `dimmer_6!` | `dimmer=3$` |
+
+Values are three digit tokens with a sign (`000`, `+05`, `-10`), so an
+exponent-less whole decibel is what the device accepts — and the entities
+offer exactly those steps. The balance is reported as `L01`…`L15`/`R01`…`R15`
+and is shown as −15…+15 so its slider is centred; both the upper and the lower
+case spelling of the sides is understood.
+
+Firmware before the current generation names the tone bypass `tone`
+(`tone_on!`, `tone?`). Both queries are asked once, and whichever the device
+answers is the one the switch uses afterwards, so no configuration is needed
+for either generation. A device that answers neither — or no tone block at all
+— leaves the switch unavailable and lists the query in the diagnostics instead
+of failing the poll.
+
 ### Adapting a profile
 
-The volume encoding is the only part that is model specific. Profiles live in
-`custom_components/rotel_control/protocol.py` and use:
+Profiles live in `custom_components/rotel_control/protocol.py` and are built
+from the inputs of `const.py`:
 
-* the command key of every input (`coax1`), plus the values a firmware revision
-  may report for it (`aliases`, e.g. `analog_cd` for `cd`) and the labels earlier
-  versions exposed (`aux 1` for `aux1`), so existing automations keep resolving;
-* `VolumeScale.*`, `volume_min_db`, `volume_max_db` and `volume_step_db`.
+* add a new input to `const.py` once (`RotelInput("coax3", "Coax 3", …)`) and
+  every profile that lists it, the input selector of the options flow and the
+  resolution of reported values all know about it;
+* build the input list of a profile from those constants, and use
+  `dataclasses.replace` (or `_line()`/`_balanced()`/`_hdmi()`) for the inputs a
+  particular unit numbers differently;
+* `VolumeScale.*`, `volume_min_db`, `volume_max_db` and `volume_step_db` decide
+  how a volume is encoded;
+* `tone_control`, `tone_bypass`, `speaker_groups` and `dimmer` declare which
+  extra entities a profile gets, and `RotelModel.queries` derives the queries
+  that are asked from them — a profile can never ask for a control it does not
+  have.
+
+Every `RotelInput` also carries the values a firmware revision may report for
+it (`aliases`, e.g. `analog_cd` for `cd`, `aux1` for `aux`, `bal_xlr1` for
+`bal_xlr`), so existing automations and unusual firmware keep resolving.
 
 The table above is derived from those profiles; `tests/test_init.py` fails when
 the two drift apart. If the volume behaves incorrectly, the client logs a warning
 naming the profile and the expected range — adjust the volume scale of the
-profile.
+profile. A unit whose input list is simply different needs no code at all: set
+**Inputs** in the options flow.
+
+## Brand assets
+
+Home Assistant 2026.3 and newer serve the images of a custom integration from
+`custom_components/<domain>/brand/`, and HACS expects the same folder (with at
+least an `icon.png`) for the repository card. Both are provided, together with
+the dark-mode variants and the `@2x` resolutions the brand rules ask for:
+
+| File | Size | Used for |
+| --- | --- | --- |
+| `brand/icon.png` | 256×256 | Setup dialog and integration list |
+| `brand/icon@2x.png` | 512×512 | High DPI screens |
+| `brand/logo.png` | 512×256 | Integration page header |
+| `brand/logo@2x.png` | 1024×512 | High DPI screens |
+| `brand/dark_*.png` | as above | Dark theme |
+| `icon.png`, `logo.png` (repository root) | 512×512, 1024×512 | HACS repository card and the README |
+
+The artwork is generated instead of being the Rotel trademark:
+
+```bash
+python tools/make_brand_images.py   # needs Pillow
+```
+
+Restart Home Assistant after the files change; the list of custom components is
+scanned at startup. Nothing else is needed — there is no `manifest.json` key for
+images, and `iot_class` only describes how the integration talks to the device.
 
 ## Discovery
 
@@ -188,8 +285,8 @@ The test suite has three layers:
 * `tests/test_init.py` — the config flow, setup, entities and services inside a
   real Home Assistant instance (`pytest-homeassistant-custom-component`).
 
-`protocol.py` has no Home Assistant imports, so the wire format can be tested
-without a running Home Assistant:
+`protocol.py` and `const.py` have no Home Assistant imports, so the wire
+format can be tested without a running Home Assistant:
 
 ```bash
 pytest tests/test_protocol.py -q
@@ -204,7 +301,9 @@ pytest tests/test_protocol.py -q
   documentation; a processor whose firmware names it differently reports the
   record source as unsupported.
 * Zone 2 of two-channel models is not exposed as a separate entity.
-* Display brightness, bass/treble and tone bypass are not exposed yet.
+* The tone controls use the `bypass`/`tone` naming of the current and the
+  immediately preceding firmware. A unit that needs neither cannot have its
+  bass/treble set, and no profile exposes the `tone_max`/`display` queries.
 
 ## License
 

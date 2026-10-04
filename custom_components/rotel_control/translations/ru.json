@@ -56,10 +56,12 @@
         "title": "Параметры усилителя Rotel",
         "data": {
           "poll_interval": "Интервал опроса (секунды)",
-          "model_profile": "Модель"
+          "model_profile": "Модель",
+          "inputs": "Входы"
         },
         "data_description": {
-          "poll_interval": "Как часто запрашивается состояние усилителя. Оставьте 2 с, если нет проблем с сетью."
+          "poll_interval": "Как часто запрашивается состояние усилителя. Оставьте 2 с, если нет проблем с сетью.",
+          "inputs": "Оставьте только те входы, которые есть у усилителя. Не меняйте выбор, чтобы использовать входы выбранной модели."
         }
       }
     }
@@ -73,6 +75,15 @@
     "number": {
       "volume_db": {
         "name": "Громкость"
+      },
+      "bass": {
+        "name": "Бас"
+      },
+      "treble": {
+        "name": "Верх"
+      },
+      "balance": {
+        "name": "Баланс"
       }
     },
     "select": {
@@ -81,6 +92,18 @@
       },
       "record_input": {
         "name": "Вход записи"
+      },
+      "display_dimmer": {
+        "name": "Яркость дисплея",
+        "state": {
+          "0": "Максимальная яркость",
+          "1": "1",
+          "2": "2",
+          "3": "3",
+          "4": "4",
+          "5": "5",
+          "6": "Минимальная яркость"
+        }
       }
     },
     "sensor": {
@@ -92,6 +115,45 @@
       },
       "protocol": {
         "name": "Подключение управления"
+      }
+    },
+    "switch": {
+      "speakers_a": {
+        "name": "Акустика A"
+      },
+      "speakers_b": {
+        "name": "Акустика B"
+      },
+      "tone_bypass": {
+        "name": "Обход тембра"
+      }
+    }
+  },
+  "selector": {
+    "inputs": {
+      "options": {
+        "cd": "CD",
+        "tuner": "Тюнер",
+        "phono": "Фоно",
+        "coax1": "Coax 1",
+        "coax2": "Coax 2",
+        "opt1": "Optical 1",
+        "opt2": "Optical 2",
+        "aux": "Aux",
+        "bal_xlr": "Балансный (BAL)",
+        "usb": "USB",
+        "pcusb": "PC-USB",
+        "bluetooth": "Bluetooth",
+        "aux1": "Aux 1",
+        "aux2": "Aux 2",
+        "bal_xlr1": "Balanced 1",
+        "bal_xlr2": "Balanced 2",
+        "bal_xlr3": "Balanced 3",
+        "bal_xlr4": "Balanced 4",
+        "hdmi1": "HDMI 1",
+        "hdmi2": "HDMI 2",
+        "hdmi3": "HDMI 3",
+        "hdmi4": "HDMI 4"
       }
     }
   }

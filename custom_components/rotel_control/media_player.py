@@ -103,12 +103,30 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the raw volume and the record source of pre-out models."""
+        """Expose the raw volume, the record source and the tone controls.
+
+        Power, volume and input are the job of the media player itself; the
+        values below are what the number, switch and select entities act on,
+        and having them here too makes a dashboard readable at a glance.
+        """
+        data = self.data
         attributes: dict[str, Any] = {}
-        if self.data.volume_raw is not None:
-            attributes["volume_raw"] = self.data.volume_raw
-        if (record := self.data.record_source) and self.coordinator.model.record_inputs:
+        if data.volume_raw is not None:
+            attributes["volume_raw"] = data.volume_raw
+        if (record := data.record_source) and self.coordinator.model.record_inputs:
             attributes["record_source"] = record.name
+        model = self.coordinator.model
+        if model.tone_control:
+            attributes["bass_db"] = data.bass_db
+            attributes["treble_db"] = data.treble_db
+            attributes["balance"] = data.balance
+        if model.tone_bypass:
+            attributes["tone_bypass"] = data.tone_bypass
+        if model.speaker_groups:
+            attributes["speakers_a"] = data.speaker_a
+            attributes["speakers_b"] = data.speaker_b
+        if model.dimmer:
+            attributes["display_dimmer"] = data.dimmer
         return attributes
 
     # --- commands --------------------------------------------------------

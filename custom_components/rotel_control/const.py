@@ -1,22 +1,24 @@
-"""Constants for the Rotel Amplifier integration."""
+"""Constants for the Rotel Amplifier integration.
+
+Everything that describes a *device* rather than a transport lives here: the
+inputs a Rotel can have, and the limits of the tone controls. The wire format
+is built on top of these values in :mod:`.protocol`, which therefore imports
+this module and not the other way round.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Final
-
-from .protocol import ROTEL_MODELS
 
 DOMAIN: Final = "rotel_control"
 LOGGER: Final = "custom_components.rotel_control"
 
-# ``{profile_key: "Rotel RA-1572"}`` for the model selector of the flows.
-MODEL_LABELS: Final[dict[str, str]] = {
-    key: model.name for key, model in ROTEL_MODELS.items()
-}
-
 # --- Configuration keys -------------------------------------------------
 CONF_MODEL_PROFILE: Final = "model_profile"
 CONF_POLL_INTERVAL: Final = "poll_interval"
+#: Protocol values of the inputs the device has, empty = use the profile.
+CONF_INPUTS: Final = "inputs"
 
 # Host/port/name come from homeassistant.const.
 #: TCP port of the Rotel ASCII control interface. 9590 is used by every model
@@ -55,7 +57,13 @@ MAX_VALUE_LENGTH: Final = 32
 DEFAULT_MODEL_PROFILE: Final = "ra1572"
 
 # --- Entities -----------------------------------------------------------
-PLATFORMS: Final[list[str]] = ["media_player", "number", "select", "sensor"]
+PLATFORMS: Final[list[str]] = [
+    "media_player",
+    "number",
+    "select",
+    "sensor",
+    "switch",
+]
 
 # How long to wait after a power-on before the interlock volume command must be
 # re-sent (Rotel silences the pre-outs on standby power-up until a volume is
@@ -67,3 +75,126 @@ INTERLOCK_VOLUME_DELAY: Final = 0.3
 # filtered by ROTEL_NAME_MARKERS and verified against the protocol.
 #: Names that identify a Rotel in an SSDP/mDNS announcement.
 ROTEL_NAME_MARKERS: Final[tuple[str, ...]] = ("rotel",)
+
+
+# --- Inputs (sources) ---------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RotelInput:
+    """A single input (source) of an amplifier.
+
+    ``value`` is what is sent to the device (``coax1`` -> ``coax1!``) and
+    ``name`` is what the user interface shows. ``aliases`` carries the other
+    spellings a firmware may report, so a device that answers ``source=aux1``
+    still resolves to the ``Aux`` input of the catalogue.
+    """
+
+    #: Command sent to the device, e.g. ``coax1`` (``coax1!``).
+    value: str
+    #: Label shown in the user interface.
+    name: str
+    icon: str = "mdi:audio-input"
+    #: Values a firmware revision may report for this input instead of
+    #: ``value``, e.g. ``analog_cd`` for ``cd``.
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        """Human readable label shown in the UI."""
+        return self.name
+
+    @property
+    def values(self) -> tuple[str, ...]:
+        """Every spelling this input is known under."""
+        return (self.value, *self.aliases)
+
+
+#: Inputs of the current Rotel network units, in the order of the catalogue a
+#: user picks from. Every profile in ``protocol.ROTEL_MODELS`` is assembled
+#: from these entries, so a name means the same thing on every device.
+#:
+#: A device only reports the inputs it has, and the selection is verified
+#: against the answer, so an input that does not exist is harmless: it is never
+#: selected by accident and a firmware that rejects it changes nothing.
+SOURCE_CD: Final = RotelInput("cd", "CD", "mdi:compact-disc", ("analog_cd",))
+SOURCE_TUNER: Final = RotelInput("tuner", "Tuner", "mdi:radio")
+SOURCE_PHONO: Final = RotelInput("phono", "Phono", "mdi:music-note")
+SOURCE_COAX1: Final = RotelInput(
+    "coax1", "Coax 1", "mdi:surround-sound", ("coax 1", "coaxial 1")
+)
+SOURCE_COAX2: Final = RotelInput(
+    "coax2", "Coax 2", "mdi:surround-sound", ("coax 2", "coaxial 2")
+)
+SOURCE_OPTICAL1: Final = RotelInput(
+    "opt1", "Optical 1", "mdi:surround-sound", ("optical1", "opt 1", "optical 1")
+)
+SOURCE_OPTICAL2: Final = RotelInput(
+    "opt2", "Optical 2", "mdi:surround-sound", ("optical2", "opt 2", "optical 2")
+)
+#: The line level input of the RC/RA series. Older units number it (``aux1``)
+#: and some report it as ``line1``, both resolve to this one entry.
+SOURCE_AUX: Final = RotelInput(
+    "aux", "Aux", "mdi:audio-input", ("aux1", "line1", "line 1")
+)
+#: Front USB of the models with a USB input. ``pcusb`` below is the *PC-USB*
+#: input, which is a different physical connector.
+SOURCE_USB: Final = RotelInput("usb", "USB", "mdi:usb", ("usb1", "front usb"))
+SOURCE_BLUETOOTH: Final = RotelInput(
+    "bluetooth", "Bluetooth", "mdi:bluetooth", ("bt", "bluetooth1")
+)
+#: The single balanced (XLR) input of the integrated amplifiers. Models with
+#: more of them build their own entries in ``protocol.py``; a unit never
+#: reports two balanced inputs under one label.
+SOURCE_BALANCED: Final = RotelInput(
+    "bal_xlr",
+    "Balanced",
+    "mdi:surround-sound",
+    ("bal_xlr1", "balanced", "bal", "balanced 1", "xlr"),
+)
+SOURCE_PCUSB: Final = RotelInput(
+    "pcusb", "PC USB", "mdi:usb", ("pc_usb", "pc-usb", "pc usb")
+)
+
+#: Every input a Rotel with a network port is documented to have.
+ROTEL_INPUTS: Final[tuple[RotelInput, ...]] = (
+    SOURCE_CD,
+    SOURCE_TUNER,
+    SOURCE_PHONO,
+    SOURCE_COAX1,
+    SOURCE_COAX2,
+    SOURCE_OPTICAL1,
+    SOURCE_OPTICAL2,
+    SOURCE_AUX,
+    SOURCE_BALANCED,
+    SOURCE_USB,
+    SOURCE_PCUSB,
+    SOURCE_BLUETOOTH,
+)
+
+#: ``{value: label}`` of the catalogue, used by the config and options flows.
+INPUT_LABELS: Final[dict[str, str]] = {
+    item.value: item.name for item in ROTEL_INPUTS
+}
+
+# --- Tone controls ------------------------------------------------------
+#: Bass and treble of the Rotel tone block, in dB. The device takes whole
+#: steps only, and ``000`` is the neutral position.
+TONE_MIN_DB: Final = -10
+TONE_MAX_DB: Final = 10
+TONE_STEP_DB: Final = 1
+#: Balance: ``L01``..``L15`` and ``R01``..``R15``, ``000`` is centred.
+BALANCE_MIN: Final = -15
+BALANCE_MAX: Final = 15
+BALANCE_STEP: Final = 1
+#: Speaker groups that can be switched on their own.
+SPEAKER_GROUPS: Final[tuple[str, ...]] = ("a", "b")
+#: Front display brightness, ``0`` is the brightest and ``6`` the dimmest.
+DIMMER_MIN: Final = 0
+DIMMER_MAX: Final = 6
+#: Options of the display dimmer select, as strings so they can be translated.
+DIMMER_OPTIONS: Final[tuple[str, ...]] = tuple(
+    str(level) for level in range(DIMMER_MIN, DIMMER_MAX + 1)
+)
+#: Speaker state tokens of a ``speaker=`` reply.
+SPEAKER_STATES: Final[tuple[str, ...]] = ("off", "a", "b", "a_b")

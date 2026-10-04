@@ -6,12 +6,15 @@ Every entry gets its own :class:`~custom_components.rotel_control.coordinator.Ro
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 
 from .api import RotelApi
 from .const import (
+    CONF_INPUTS,
     CONF_MODEL_PROFILE,
     CONF_POLL_INTERVAL,
     DEFAULT_MODEL_PROFILE,
@@ -21,24 +24,38 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import RotelConfigEntry, RotelCoordinator
-from .protocol import get_model
+from .protocol import RotelModel, get_model, get_model_inputs
+
+
+def async_resolve_model(entry: RotelConfigEntry) -> RotelModel:
+    """Return the model profile of an entry, with its input list applied.
+
+    Options win over data so the options flow can retune a running device: it
+    may switch to another profile and trim the inputs down to the ones the
+    unit actually has.
+    """
+    model = get_model(
+        entry.options.get(
+            CONF_MODEL_PROFILE,
+            entry.data.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
+        )
+    )
+    selected = entry.options.get(CONF_INPUTS) or entry.data.get(CONF_INPUTS)
+    if selected:
+        model = replace(model, inputs=get_model_inputs(model, selected))
+    return model
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: RotelConfigEntry) -> bool:
     """Set up Rotel from a config entry."""
     host: str = entry.data[CONF_HOST]
     port: int = entry.data.get(CONF_PORT, DEFAULT_PORT)
-    # Options win over data so the options flow can retune a running device.
-    model_key: str = entry.options.get(
-        CONF_MODEL_PROFILE,
-        entry.data.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
-    )
     poll_interval: int = entry.options.get(
         CONF_POLL_INTERVAL,
         entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
     )
 
-    model = get_model(model_key)
+    model = async_resolve_model(entry)
     api = RotelApi(host, port, model)
     coordinator = RotelCoordinator(hass, entry, api, model, poll_interval)
 

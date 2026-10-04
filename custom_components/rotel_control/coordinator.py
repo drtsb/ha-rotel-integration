@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -19,7 +19,7 @@ from .api import (
     RotelStatus,
 )
 from .const import DEFAULT_POLL_INTERVAL, DOMAIN
-from .protocol import RotelInput, RotelModel
+from .protocol import RotelCommand, RotelInput, RotelModel
 
 LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -37,6 +37,17 @@ class RotelData:
     device_model: str | None = None
     #: Volume exactly as the device reported it (front panel scale).
     volume_raw: str | None = None
+    #: Tone block in dB, and the balance in L01..L15/R01..R15 steps.
+    bass_db: int | None = None
+    treble_db: int | None = None
+    balance: int | None = None
+    #: True while the tone block is bypassed.
+    tone_bypass: bool | None = None
+    #: Speaker groups that are switched on.
+    speaker_a: bool | None = None
+    speaker_b: bool | None = None
+    #: Front display brightness, ``0`` is the brightest.
+    dimmer: int | None = None
     unsupported: frozenset[str] = frozenset()
 
     @classmethod
@@ -51,32 +62,24 @@ class RotelData:
             firmware=status.firmware,
             device_model=status.model,
             volume_raw=status.volume_raw,
+            bass_db=status.bass_db,
+            treble_db=status.treble_db,
+            balance=status.balance,
+            tone_bypass=status.tone_bypass,
+            speaker_a=status.speaker_a,
+            speaker_b=status.speaker_b,
+            dimmer=status.dimmer,
             unsupported=status.unsupported,
         )
 
-    def apply(
-        self,
-        *,
-        power: bool | None = None,
-        volume_db: float | None = None,
-        mute: bool | None = None,
-        source: RotelInput | None = None,
-        record_source: RotelInput | None = None,
-    ) -> RotelData:
+    def apply(self, **updates: Any) -> RotelData:
         """Return a copy with the given fields replaced.
 
-        Only fields that are not ``None`` are replaced, which lets callers
-        optimistically update a single property after a command while keeping
-        the values still unknown to the device.
+        Only the fields that are passed are replaced, and ``None`` never is:
+        a caller that optimistically updates one property after a command
+        leaves the values still unknown to the device untouched.
         """
-        return replace(
-            self,
-            power=self.power if power is None else power,
-            volume_db=self.volume_db if volume_db is None else volume_db,
-            mute=self.mute if mute is None else mute,
-            source=self.source if source is None else source,
-            record_source=self.record_source if record_source is None else record_source,
-        )
+        return replace(self, **{k: v for k, v in updates.items() if v is not None})
 
 
 RotelConfigEntry: TypeAlias = ConfigEntry[RotelApi]
@@ -190,6 +193,38 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         """Select the record input and refresh."""
         resolved = await self.api.async_set_record_source(source)
         self.async_set_updated_data(self.known_state.apply(record_source=resolved))
+        await self.async_request_refresh()
+
+    async def async_set_tone(self, command: RotelCommand, value: float) -> None:
+        """Set bass or treble in dB and refresh."""
+        applied = await self.api.async_set_tone(command, value)
+        field = "bass_db" if command is RotelCommand.BASS else "treble_db"
+        self.async_set_updated_data(self.known_state.apply(**{field: applied}))
+        await self.async_request_refresh()
+
+    async def async_set_balance(self, balance: float) -> None:
+        """Set the channel balance and refresh."""
+        applied = await self.api.async_set_balance(balance)
+        self.async_set_updated_data(self.known_state.apply(balance=applied))
+        await self.async_request_refresh()
+
+    async def async_set_tone_bypass(self, bypass: bool) -> None:
+        """Bypass or re-enable the tone block and refresh."""
+        applied = await self.api.async_set_tone_bypass(bypass)
+        self.async_set_updated_data(self.known_state.apply(tone_bypass=applied))
+        await self.async_request_refresh()
+
+    async def async_set_speaker(self, group: str, enabled: bool) -> None:
+        """Switch one speaker group and refresh."""
+        await self.api.async_set_speaker(group, enabled)
+        field = "speaker_a" if group.casefold() == "a" else "speaker_b"
+        self.async_set_updated_data(self.known_state.apply(**{field: enabled}))
+        await self.async_request_refresh()
+
+    async def async_set_dimmer(self, level: float) -> None:
+        """Set the display brightness and refresh."""
+        applied = await self.api.async_set_dimmer(level)
+        self.async_set_updated_data(self.known_state.apply(dimmer=applied))
         await self.async_request_refresh()
 
 

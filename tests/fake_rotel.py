@@ -17,7 +17,9 @@ RESPONSE_TERMINATOR = "$"
 #: Characters that close a command.
 COMMAND_ENDS = "?!"
 
-#: Query key -> the state attribute that answers it.
+#: Query key -> the state attribute that answers it. ``bypass`` and ``tone``
+#: are two spellings of the same switch, and a device answers only the one its
+#: firmware knows (see ``legacy_tone``).
 QUERIES = {
     "power": "power",
     "volume": "volume",
@@ -26,6 +28,13 @@ QUERIES = {
     "record_source": "record_source",
     "model": "model",
     "version": "firmware",
+    "bypass": "tone_bypass",
+    "tone": "tone_bypass",
+    "bass": "bass",
+    "treble": "treble",
+    "balance": "balance",
+    "speaker": "speaker",
+    "dimmer": "dimmer",
 }
 
 
@@ -42,6 +51,21 @@ def _field(key: str, value: object) -> str:
     return f"{key}={value}{RESPONSE_TERMINATOR}"
 
 
+def _signed(value: int) -> str:
+    """Format a tone block value: ``000``, ``+05``, ``-10``."""
+    if not value:
+        return "000"
+    return f"{value:+03d}"
+
+
+def _balance(value: int) -> str:
+    """Format a balance: ``000``, ``L15``, ``R03``."""
+    if not value:
+        return "000"
+    side = "L" if value < 0 else "R"
+    return f"{side}{abs(value):02d}"
+
+
 class FakeRotel:
     """Minimal Rotel amplifier speaking the ASCII protocol."""
 
@@ -55,6 +79,13 @@ class FakeRotel:
         record_source: str = "cd",
         model: str = "RA1572",
         firmware: str = "1.24",
+        bass: int = 0,
+        treble: int = 0,
+        balance: int = 0,
+        tone_bypass: bool = False,
+        speaker: str = "a",
+        dimmer: int = 2,
+        legacy_tone: bool = False,
         ignore: frozenset[str] = frozenset(),
         drop_next: bool = False,
         fragment: bool = False,
@@ -69,6 +100,15 @@ class FakeRotel:
         self.record_source = record_source
         self.model = model
         self.firmware = firmware
+        self.bass = bass
+        self.treble = treble
+        self.balance = balance
+        self.tone_bypass = tone_bypass
+        #: ``off``, ``a``, ``b`` or ``a_b``.
+        self.speaker = speaker
+        self.dimmer = dimmer
+        #: Firmware that reports the tone bypass as "tone" instead of "bypass".
+        self.legacy_tone = legacy_tone
         #: Query keys the device does not answer (as an old firmware would).
         self.ignore = ignore
         self.drop_next = drop_next
@@ -153,6 +193,11 @@ class FakeRotel:
 
     def _answer_query(self, name: str) -> str:
         """Return the ``key=value$`` answer of a query."""
+        if name in {"bypass", "tone"}:
+            # Only the spelling this firmware knows is answered.
+            wanted = "tone" if self.legacy_tone else "bypass"
+            if name != wanted:
+                return f"?{RESPONSE_TERMINATOR}"
         attribute = QUERIES.get(name)
         if attribute is None or name in self.ignore:
             return f"?{RESPONSE_TERMINATOR}"
@@ -168,6 +213,12 @@ class FakeRotel:
             "record_source": self.record_source,
             "model": self.model,
             "firmware": self.firmware,
+            "bass": _signed(self.bass),
+            "treble": _signed(self.treble),
+            "balance": _balance(self.balance),
+            "tone_bypass": "on" if self.tone_bypass else "off",
+            "speaker": self.speaker,
+            "dimmer": str(self.dimmer),
         }[attribute]
         return f'"{value}"' if self.quote else str(value)
 
@@ -185,7 +236,54 @@ class FakeRotel:
         if command in {"mute_on", "mute_off"}:
             self.mute = command == "mute_on"
             return _field("mute", self._reported("mute"))
+        if command.startswith(("bass_", "treble_")):
+            attribute, _, payload = command.partition("_")
+            setattr(self, attribute, int(payload))
+            return _field(attribute, self._reported(attribute))
+        if command.startswith("balance_"):
+            self.balance = _parse_balance(command.removeprefix("balance_"))
+            return _field("balance", _balance(self.balance))
+        if command.startswith("speaker_"):
+            return _field("speaker", self._apply_speaker(command))
+        if command.startswith("dimmer_"):
+            self.dimmer = int(command.removeprefix("dimmer_"))
+            return _field("dimmer", self.dimmer)
+        if command in {"bypass_on", "bypass_off"} and not self.legacy_tone:
+            self.tone_bypass = command == "bypass_on"
+            return _field("bypass", self._reported("tone_bypass"))
+        if command in {"tone_on", "tone_off"} and self.legacy_tone:
+            self.tone_bypass = command == "tone_on"
+            return _field("tone", self._reported("tone_bypass"))
         if command in QUERIES:  # not a command the device knows
             return f"?{RESPONSE_TERMINATOR}"
         self.source = command
         return _field("source", self.source)
+
+    def _apply_speaker(self, command: str) -> str:
+        """Apply a speaker command and return the resulting speaker state.
+
+        ``speaker_a_on!``/``speaker_a_off!`` set a group, while the shorter
+        ``speaker_a!`` toggles it, exactly as the documentation describes.
+        """
+        _, group, action = command.split("_", 2)
+        groups = set(self.speaker.split("_")) - {"off"}
+        if action in {"on", "off"}:
+            groups = groups | {group} if action == "on" else groups - {group}
+        else:
+            groups = groups - {group} if group in groups else groups | {group}
+        if not groups:
+            self.speaker = "off"
+        elif groups == {"a", "b"}:
+            self.speaker = "a_b"
+        else:
+            self.speaker = next(iter(groups))
+        return self.speaker
+
+
+def _parse_balance(token: str) -> int:
+    """Decode a ``balance_`` payload into a signed value."""
+    token = token.strip().lower()
+    if token in {"000", "0"}:
+        return 0
+    side, magnitude = token[0], int(token[1:])
+    return -magnitude if side == "l" else magnitude
