@@ -19,7 +19,7 @@ from .api import (
     RotelStatus,
 )
 from .const import DEFAULT_POLL_INTERVAL, DOMAIN
-from .protocol import RotelInput, RotelModel, get_model
+from .protocol import RotelInput, RotelModel
 
 LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -35,6 +35,8 @@ class RotelData:
     record_source: RotelInput | None = None
     firmware: str | None = None
     device_model: str | None = None
+    #: Volume exactly as the device reported it (front panel scale).
+    volume_raw: str | None = None
     unsupported: frozenset[str] = frozenset()
 
     @classmethod
@@ -48,6 +50,7 @@ class RotelData:
             record_source=status.record_source,
             firmware=status.firmware,
             device_model=status.model,
+            volume_raw=status.volume_raw,
             unsupported=status.unsupported,
         )
 
@@ -147,37 +150,47 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
 
     # --- helpers for the entity platforms --------------------------------
 
+    @property
+    def known_state(self) -> RotelData:
+        """Last known state, empty while no poll has succeeded yet.
+
+        Services may be called before the first update completes, so the
+        optimistically updated values must not assume ``data`` is set.
+        """
+        return self.data if self.data is not None else RotelData()
+
     async def async_set_power(self, power: bool) -> None:
         """Switch the amplifier on/off and refresh."""
         await self.api.async_set_power(power)
+        known = self.known_state
         self.async_set_updated_data(
-            self.data.apply(power=power, mute=False if power else self.data.mute)
+            known.apply(power=power, mute=False if power else known.mute)
         )
         await self.async_request_refresh()
 
     async def async_set_volume(self, volume_db: float) -> None:
         """Set the volume and refresh."""
         applied = await self.api.async_set_volume(volume_db)
-        self.async_set_updated_data(self.data.apply(volume_db=applied))
+        self.async_set_updated_data(self.known_state.apply(volume_db=applied))
         await self.async_request_refresh()
 
     async def async_set_mute(self, mute: bool) -> None:
         """Mute/unmute and refresh."""
         await self.api.async_set_mute(mute)
-        self.async_set_updated_data(self.data.apply(mute=mute))
+        self.async_set_updated_data(self.known_state.apply(mute=mute))
         await self.async_request_refresh()
 
     async def async_set_source(self, source: str) -> None:
         """Select an input and refresh."""
         resolved = await self.api.async_set_source(source)
-        self.async_set_updated_data(self.data.apply(source=resolved))
+        self.async_set_updated_data(self.known_state.apply(source=resolved))
         await self.async_request_refresh()
 
     async def async_set_record_source(self, source: str) -> None:
         """Select the record input and refresh."""
         resolved = await self.api.async_set_record_source(source)
-        self.async_set_updated_data(self.data.apply(record_source=resolved))
+        self.async_set_updated_data(self.known_state.apply(record_source=resolved))
         await self.async_request_refresh()
 
 
-__all__ = ("RotelConfigEntry", "RotelCoordinator", "RotelData", "get_model")
+__all__ = ("RotelConfigEntry", "RotelCoordinator", "RotelData")

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add Rotel amplifier",
-        "description": "Enter the network address of the amplifier and the TCP port of its control interface (9500 by default).",
+        "description": "Enter the network address of the amplifier and the TCP port of its control interface (9590 by default).",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -12,8 +12,8 @@
         },
         "data_description": {
           "host": "IP address or hostname of the amplifier.",
-          "port": "TCP port of the Rotel control interface.",
-          "model_profile": "Determines the list of inputs and the volume range.",
+          "port": "TCP port of the Rotel control interface. Use 9590, or 9600/9500 for older units. The amplifier must be switched on and its network control enabled (POWER OPTION = Quick).",
+          "model_profile": "Determines the list of inputs and the volume range. A model reported by the amplifier itself overrides this choice.",
           "name": "Optional name of the device."
         }
       },
@@ -39,11 +39,13 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect: the device did not answer the Rotel protocol on this address and port."
+      "cannot_connect": "Failed to connect: nothing is listening on this address and port. Check the IP address, the port (9590 by default) and that the amplifier is switched on.",
+      "device_closed": "The amplifier accepted the connection but closed it immediately. Power it on, set POWER OPTION = Quick in its setup menu, and close other controllers — the Rotel app holds the single control connection.",
+      "no_response": "Connected to the port, but the device does not answer the Rotel protocol. Check that the port is the control port of the amplifier (9590 by default) and not its web interface."
     },
     "abort": {
       "already_configured": "This amplifier is already configured.",
-      "not_rotel": "The discovered device is not a Rotel amplifier.",
+      "not_rotel": "The discovered device did not answer the Rotel protocol on any known control port.",
       "not_supported": "The discovered device does not expose a usable address.",
       "reauth_successful": "Reconnected successfully."
     }

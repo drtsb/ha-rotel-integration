@@ -34,8 +34,8 @@ class RotelEntity(CoordinatorEntity[RotelCoordinator]):
 
     @property
     def data(self) -> RotelData:
-        """Last known state of the amplifier."""
-        return self.coordinator.data
+        """Last known state of the amplifier, empty before the first update."""
+        return self.coordinator.known_state
 
     @property
     def available(self) -> bool:
