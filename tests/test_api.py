@@ -90,7 +90,12 @@ async def test_get_status_asks_for_every_field_once(
 
     await api.async_get_status()
 
-    assert sorted(device.received) == ["mute?", "power?", "source?", "volume?"]
+    # Everything the profile declares, on every poll, so an entity that shows
+    # a tone or a display setting always follows the device.
+    assert sorted(device.received) == sorted(
+        [f"{key}?" for key in protocol_module.get_model("ra1572").queries]
+        + ["mute?", "power?", "source?", "volume?"]
+    )
 
 
 async def test_set_power_and_volume_round_trip(api_module, protocol_module, device) -> None:

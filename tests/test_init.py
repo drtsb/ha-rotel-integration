@@ -28,8 +28,10 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rotel_control.const import (
+    CONF_INPUTS,
     CONF_MODEL_PROFILE,
     CONF_POLL_INTERVAL,
+    DEFAULT_POLL_INTERVAL,
     DEFAULT_PORT,
     DOMAIN,
 )
@@ -81,7 +83,9 @@ def _suggested_values(result: dict[str, Any]) -> dict[str, Any]:
     return suggested
 
 
-async def _async_setup(hass: HomeAssistant, device: FakeRotel) -> MockConfigEntry:
+async def _async_setup(
+    hass: HomeAssistant, device: FakeRotel, model: str = "ra1572"
+) -> MockConfigEntry:
     """Add the integration through the config flow and set it up."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
@@ -94,7 +98,7 @@ async def _async_setup(hass: HomeAssistant, device: FakeRotel) -> MockConfigEntr
         {
             CONF_HOST: "127.0.0.1",
             CONF_PORT: device.port,
-            CONF_MODEL_PROFILE: "ra1572",
+            CONF_MODEL_PROFILE: model,
             CONF_NAME: "Living room",
         },
     )
@@ -145,7 +149,14 @@ async def test_all_platforms_are_forwarded(hass: HomeAssistant, device: FakeRote
 
     assert registry.async_get("media_player.living_room_amplifier")
     assert registry.async_get("number.living_room_volume")
+    assert registry.async_get("number.living_room_bass")
+    assert registry.async_get("number.living_room_treble")
+    assert registry.async_get("number.living_room_balance")
     assert registry.async_get("select.living_room_input")
+    assert registry.async_get("select.living_room_display_brightness")
+    assert registry.async_get("switch.living_room_speakers_a")
+    assert registry.async_get("switch.living_room_speakers_b")
+    assert registry.async_get("switch.living_room_tone_bypass")
     assert registry.async_get("sensor.living_room_control_connection")
     assert entry.state is ConfigEntryState.LOADED
 
@@ -178,6 +189,74 @@ async def test_media_player_state_and_volume(hass: HomeAssistant, device: FakeRo
     features = state.attributes["supported_features"]
     assert features & 128  # SELECT_SOURCE
     assert features & 256  # TURN_OFF
+
+
+@pytest.mark.parametrize(
+    ("label", "command"),
+    [
+        ("CD", "cd!"),
+        ("Tuner", "tuner!"),
+        ("Phono", "phono!"),
+        ("Coax 1", "coax1!"),
+        ("Coax 2", "coax2!"),
+        ("Optical 1", "opt1!"),
+        ("Optical 2", "opt2!"),
+        ("Aux", "aux!"),
+        ("Balanced", "bal_xlr!"),
+        ("USB", "usb!"),
+        ("PC USB", "pcusb!"),
+        ("Bluetooth", "bluetooth!"),
+    ],
+)
+async def test_generic_profile_offers_the_documented_inputs(
+    hass: HomeAssistant, socket_enabled: None, label: str, command: str
+) -> None:
+    """An unknown unit is offered every input, each with its own command."""
+    device = FakeRotel(source="aux", model="RC-1590")
+    await device.start()
+    try:
+        await _async_setup(hass, device, model="generic")
+        state = hass.states.get("media_player.living_room_amplifier")
+
+        assert state.attributes["source_list"] == [
+            "CD",
+            "Tuner",
+            "Phono",
+            "Coax 1",
+            "Coax 2",
+            "Optical 1",
+            "Optical 2",
+            "Aux",
+            "Balanced",
+            "USB",
+            "PC USB",
+            "Bluetooth",
+        ]
+        assert state.attributes["source"] == "Aux"
+        # One balanced input, reported by the hardware as bal_xlr.
+        assert (
+            len(
+                [
+                    name
+                    for name in state.attributes["source_list"]
+                    if name.startswith("Balanced")
+                ]
+            )
+            == 1
+        )
+
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": "select.living_room_input", "option": label},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+    finally:
+        await device.stop()
+
+    assert command in device.received
+    assert hass.states.get("select.living_room_input").state == label
 
 
 async def test_turn_off_and_on_go_to_the_device(hass: HomeAssistant, device: FakeRotel) -> None:
@@ -278,6 +357,227 @@ async def test_number_entity_sets_db(hass: HomeAssistant, device: FakeRotel) -> 
     )
     await hass.async_block_till_done()
     assert "vol_60!" in device.received
+
+
+# --- tone controls ------------------------------------------------------
+
+
+async def test_tone_numbers_report_the_device_values(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """Bass, treble and balance start at what the amplifier reported."""
+    device = FakeRotel(bass=-4, treble=6, balance=-3)
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
+    bass = hass.states.get("number.living_room_bass")
+    assert bass.attributes["min"] == -10.0
+    assert bass.attributes["max"] == 10.0
+    assert bass.attributes["step"] == 1.0
+    assert bass.attributes["unit_of_measurement"] == "dB"
+    assert bass.state == "-4.0"
+    assert hass.states.get("number.living_room_treble").state == "6.0"
+    # Left is negative, so the slider is centred on 0.
+    assert hass.states.get("number.living_room_balance").state == "-3.0"
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "value", "expected"),
+    [
+        ("number.living_room_bass", -5.0, "bass_-05!"),
+        ("number.living_room_bass", 0.0, "bass_000!"),
+        ("number.living_room_bass", 8.0, "bass_+08!"),
+        ("number.living_room_treble", -2.0, "treble_-02!"),
+        ("number.living_room_treble", 10.0, "treble_+10!"),
+        ("number.living_room_balance", -7.0, "balance_l07!"),
+        ("number.living_room_balance", 0.0, "balance_000!"),
+        ("number.living_room_balance", 12.0, "balance_r12!"),
+    ],
+)
+async def test_tone_numbers_send_the_rotel_commands(
+    hass: HomeAssistant, device: FakeRotel, entity_id: str, value: float, expected: str
+) -> None:
+    """A tone value is translated into the documented command."""
+    await _async_setup(hass, device)
+
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert expected in device.received
+    # The state follows what the device confirms.
+    assert hass.states.get(entity_id).state == f"{device_state(device, entity_id)}"
+
+
+def device_state(device: FakeRotel, entity_id: str) -> float:
+    """Return the value the fake device now reports for a tone entity."""
+    if entity_id.endswith("bass"):
+        return float(device.bass)
+    if entity_id.endswith("treble"):
+        return float(device.treble)
+    return float(device.balance)
+
+
+async def test_speaker_switches_use_the_explicit_commands(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Each speaker group is switched on and off on its own."""
+    await _async_setup(hass, device)
+    assert hass.states.get("switch.living_room_speakers_a").state == STATE_ON
+    assert hass.states.get("switch.living_room_speakers_b").state == STATE_OFF
+
+    await hass.services.async_call(
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.living_room_speakers_b"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert "speaker_b_on!" in device.received
+    assert device.speaker == "a_b"
+    assert hass.states.get("switch.living_room_speakers_a").state == STATE_ON
+    assert hass.states.get("switch.living_room_speakers_b").state == STATE_ON
+
+    await hass.services.async_call(
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.living_room_speakers_a"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert "speaker_a_off!" in device.received
+    assert device.speaker == "b"
+    assert hass.states.get("switch.living_room_speakers_a").state == STATE_OFF
+    assert hass.states.get("switch.living_room_speakers_b").state == STATE_ON
+
+
+async def test_tone_bypass_switch(hass: HomeAssistant, device: FakeRotel) -> None:
+    """The tone block is bypassed and enabled again."""
+    await _async_setup(hass, device)
+    assert hass.states.get("switch.living_room_tone_bypass").state == STATE_OFF
+
+    await hass.services.async_call(
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.living_room_tone_bypass"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert "bypass_on!" in device.received
+    assert device.tone_bypass is True
+    assert hass.states.get("switch.living_room_tone_bypass").state == STATE_ON
+
+    await hass.services.async_call(
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.living_room_tone_bypass"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert "bypass_off!" in device.received
+    assert hass.states.get("switch.living_room_tone_bypass").state == STATE_OFF
+
+
+async def test_tone_bypass_switch_on_legacy_firmware(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """Firmware that answers "tone" instead of "bypass" still works."""
+    device = FakeRotel(legacy_tone=True)
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+        await hass.services.async_call(
+            "switch",
+            "turn_on",
+            {"entity_id": "switch.living_room_tone_bypass"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+    finally:
+        await device.stop()
+
+    assert "bypass_on!" not in device.received
+    assert "tone_on!" in device.received
+    assert device.tone_bypass is True
+    assert hass.states.get("switch.living_room_tone_bypass").state == STATE_ON
+
+
+async def test_display_dimmer_select(hass: HomeAssistant, device: FakeRotel) -> None:
+    """Every brightness level is offered and maps to one command."""
+    await _async_setup(hass, device)
+    state = hass.states.get("select.living_room_display_brightness")
+
+    assert state.attributes["options"] == ["0", "1", "2", "3", "4", "5", "6"]
+    assert state.state == "2"
+
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.living_room_display_brightness", "option": "5"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert "dimmer_5!" in device.received
+    assert hass.states.get("select.living_room_display_brightness").state == "5"
+
+
+async def test_tone_entities_are_unavailable_without_the_control(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A device that does not answer a query shows the entity as unavailable."""
+    device = FakeRotel(
+        ignore=frozenset({"bypass", "bass", "treble", "balance", "speaker", "dimmer"})
+    )
+    await device.start()
+    try:
+        entry = await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
+    for entity_id in (
+        "number.living_room_bass",
+        "number.living_room_treble",
+        "number.living_room_balance",
+        "switch.living_room_speakers_a",
+        "switch.living_room_tone_bypass",
+        "select.living_room_display_brightness",
+    ):
+        assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    # The amplifier itself is untouched by an unsupported control.
+    assert hass.states.get("media_player.living_room_amplifier").state == STATE_ON
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert "bass" in diagnostics["state"]["unsupported_queries"]
+
+
+async def test_media_player_exposes_the_tone_state(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """The extended state is readable on the media player as well."""
+    device = FakeRotel(bass=2, treble=-1, balance=4, dimmer=0, speaker="a_b")
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
+    attributes = hass.states.get("media_player.living_room_amplifier").attributes
+    assert attributes["bass_db"] == 2
+    assert attributes["treble_db"] == -1
+    assert attributes["balance"] == 4
+    assert attributes["tone_bypass"] is False
+    assert attributes["speakers_a"] is True
+    assert attributes["speakers_b"] is True
+    assert attributes["display_dimmer"] == 0
 
 
 async def test_cannot_connect_shows_an_error(
@@ -577,13 +877,47 @@ async def test_options_flow_changes_the_poll_interval(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "init"
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_POLL_INTERVAL: 30, CONF_MODEL_PROFILE: "ra1572"}
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: 30,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+        },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
     coordinator = hass.data[DOMAIN][entry.entry_id]
     assert coordinator.update_interval.total_seconds() == 30
+
+
+async def test_options_flow_limits_the_inputs(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A unit with fewer inputs than its profile only shows what it has."""
+    entry = await _async_setup(hass, device)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: DEFAULT_POLL_INTERVAL,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: ["cd", "tuner", "bal_xlr", "usb"],
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert [item.value for item in coordinator.model.inputs] == [
+        "cd",
+        "tuner",
+        "bal_xlr",
+        "usb",
+    ]
+    state = hass.states.get("select.living_room_input")
+    assert state.attributes["options"] == ["CD", "Tuner", "Balanced", "USB"]
 
 
 async def test_unload_removes_the_socket(hass: HomeAssistant, device: FakeRotel) -> None:
@@ -678,7 +1012,13 @@ async def test_state_is_readable_before_the_first_poll(
     assert player.volume_level is None
     assert player.is_volume_muted is None
     assert player.source is None
-    assert player.extra_state_attributes == {}
+    # Nothing is known yet, so the raw volume is absent and the tone controls
+    # read as unknown rather than as a value the device never reported.
+    attributes = player.extra_state_attributes
+    assert "volume_raw" not in attributes
+    assert attributes["bass_db"] is None
+    assert attributes["tone_bypass"] is None
+    assert attributes["display_dimmer"] is None
 
     number_entity = hass.data["entity_components"]["number"].get_entity(
         "number.living_room_volume"
@@ -790,3 +1130,41 @@ def test_readme_documents_every_profile() -> None:
             assert len(
                 [item for item in model.inputs if item.name.startswith("Balanced")]
             ) == 4
+
+
+# --- brand assets -------------------------------------------------------
+
+BRAND_DIR = Path(__file__).parent.parent / "custom_components" / "rotel_control" / "brand"
+
+#: Home Assistant serves the images of a custom integration from
+#: ``custom_components/<domain>/brand/`` and HACS expects the same folder, so
+#: the sizes are the ones the brand rules ask for: a square icon, its double
+#: size, and a landscape logo in both resolutions.
+BRAND_SIZES = {
+    "icon.png": (256, 256),
+    "icon@2x.png": (512, 512),
+    "logo.png": (512, 256),
+    "logo@2x.png": (1024, 512),
+}
+
+
+@pytest.mark.parametrize(("name", "size"), BRAND_SIZES.items())
+def test_brand_images_are_shipped(name: str, size: tuple[int, int]) -> None:
+    """The integration folder carries the logo the UI shows."""
+    from PIL import Image
+
+    path = BRAND_DIR / name
+    assert path.is_file(), f"{path} is missing"
+    with Image.open(path) as image:
+        assert image.size == size
+        assert image.mode == "RGBA"
+
+
+def test_repository_root_carries_the_hacs_brand() -> None:
+    """HACS reads the icon of a repository from its root."""
+    from PIL import Image
+
+    root = Path(__file__).parent.parent
+    with Image.open(root / "icon.png") as image:
+        assert image.size == (512, 512)
+    assert (root / "logo.png").is_file()

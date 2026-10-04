@@ -6,20 +6,44 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
+    CONF_INPUTS,
     CONF_MODEL_PROFILE,
     CONF_POLL_INTERVAL,
     DEFAULT_MODEL_PROFILE,
     DEFAULT_POLL_INTERVAL,
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
-    MODEL_LABELS,
 )
+from .protocol import MODEL_LABELS, get_model, selectable_inputs
+
+
+def inputs_selector() -> SelectSelector:
+    """Return the selector that picks the inputs a device has.
+
+    The options are the protocol values (``coax1``), which are what the entry
+    stores, while the labels the user sees come from the ``inputs``
+    translation key. Storing the values keeps a selection valid when a label
+    is renamed or translated.
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[item.value for item in selectable_inputs()],
+            translation_key="inputs",
+            multiple=True,
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
 
 
 class RotelOptionsFlow(OptionsFlow):
-    """Allow changing the polling rate and the model profile at runtime."""
+    """Allow changing the polling rate, the model and the inputs at runtime."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -37,6 +61,14 @@ class RotelOptionsFlow(OptionsFlow):
                 self.config_entry.data.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
             ),
         }
+        # The inputs of the profile in use are the suggestion: changing the
+        # model offers that model's inputs instead of an empty list.
+        profile = self.config_entry.options.get(
+            CONF_MODEL_PROFILE, current[CONF_MODEL_PROFILE]
+        )
+        selected = self.config_entry.options.get(CONF_INPUTS)
+        if selected is None:
+            selected = [item.value for item in get_model(profile).inputs]
         schema = vol.Schema(
             {
                 vol.Required(
@@ -48,6 +80,7 @@ class RotelOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_MODEL_PROFILE, default=current[CONF_MODEL_PROFILE]
                 ): vol.In(MODEL_LABELS),
+                vol.Required(CONF_INPUTS, default=list(selected)): inputs_selector(),
             }
         )
         return self.async_show_form(
@@ -57,4 +90,4 @@ class RotelOptionsFlow(OptionsFlow):
         )
 
 
-__all__ = ("RotelOptionsFlow",)
+__all__ = ("RotelOptionsFlow", "inputs_selector")

@@ -25,7 +25,6 @@ from .const import (
     DEFAULT_MODEL_PROFILE,
     DEFAULT_PORT,
     DOMAIN,
-    MODEL_LABELS,
     PORT_MAX,
     PORT_MIN,
     PROBE_CONNECT_TIMEOUT,
@@ -34,7 +33,7 @@ from .const import (
     SOCKET_TIMEOUT,
 )
 from .options_flow import RotelOptionsFlow
-from .protocol import RotelModel, detect_model, get_model
+from .protocol import MODEL_LABELS, RotelModel, detect_model, get_model
 
 LOGGER: logging.Logger = logging.getLogger(__package__)
 

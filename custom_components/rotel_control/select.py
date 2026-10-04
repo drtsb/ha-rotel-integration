@@ -1,4 +1,4 @@
-"""Select platform: input and record-source selection."""
+"""Select platform: input, record-source and display-brightness selection."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from homeassistant.components.select import SelectEntity, SelectEntityDescriptio
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DIMMER_OPTIONS, DOMAIN
 from .coordinator import RotelConfigEntry, RotelCoordinator
 from .entity import RotelEntity
 
@@ -21,6 +21,8 @@ async def async_setup_entry(
     entities: list[SelectEntity] = [RotelInputSelect(coordinator, entry)]
     if coordinator.model.record_inputs:
         entities.append(RotelRecordInputSelect(coordinator, entry))
+    if coordinator.model.dimmer:
+        entities.append(RotelDimmerSelect(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -84,3 +86,56 @@ class RotelRecordInputSelect(RotelEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Select the record source."""
         await self.coordinator.async_set_record_source(option)
+
+
+ROTEL_DISPLAY_DIMMER = SelectEntityDescription(
+    key="display_dimmer",
+    translation_key="display_dimmer",
+    icon="mdi:brightness-5",
+)
+
+
+class RotelDimmerSelect(RotelEntity, SelectEntity):
+    """Brightness of the front display.
+
+    The device takes one command per level (``dimmer_0!`` is the brightest,
+    ``dimmer_6!`` the dimmest), so the levels are offered as options instead of
+    a slider. Their names are translated through
+    ``entity.select.display_dimmer.state``.
+    """
+
+    entity_description = ROTEL_DISPLAY_DIMMER
+
+    def __init__(
+        self,
+        coordinator: RotelCoordinator,
+        entry: RotelConfigEntry,
+    ) -> None:
+        """Initialise the display dimmer select."""
+        super().__init__(coordinator, entry, ROTEL_DISPLAY_DIMMER)
+        self._attr_options = list(DIMMER_OPTIONS)
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the brightness level currently set on the device."""
+        level = self.data.dimmer
+        return None if level is None else str(level)
+
+    @property
+    def available(self) -> bool:
+        """Only available while the amplifier reports the brightness."""
+        return super().available and self.data.dimmer is not None
+
+    async def async_select_option(self, option: str) -> None:
+        """Set the display brightness."""
+        await self.coordinator.async_set_dimmer(int(option))
+
+
+__all__ = (
+    "ROTEL_DISPLAY_DIMMER",
+    "ROTEL_INPUT",
+    "ROTEL_RECORD_INPUT",
+    "RotelDimmerSelect",
+    "RotelInputSelect",
+    "RotelRecordInputSelect",
+)

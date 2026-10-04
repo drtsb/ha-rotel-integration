@@ -2,34 +2,17 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
+import importlib
 
 import pytest
 
-MODULE_PATH = (
-    Path(__file__).parent.parent
-    / "custom_components"
-    / "rotel_control"
-    / "protocol.py"
-)
+# Registering the package is a side effect of this import; the protocol is then
+# loaded as part of it, so its relative import of ``const`` resolves. Neither
+# module imports Home Assistant, which is what this suite guards.
+from conftest import PACKAGE_NAME
 
-
-def _load_protocol():
-    """Load protocol.py standalone (no Home Assistant imports involved)."""
-    name = "rotel_protocol_under_test"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, MODULE_PATH)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-protocol = _load_protocol()
+protocol = importlib.import_module(f"{PACKAGE_NAME}.protocol")
+protocol_const = importlib.import_module(f"{PACKAGE_NAME}.const")
 RotelCommand = protocol.RotelCommand
 RotelInput = protocol.RotelInput
 RotelModel = protocol.RotelModel
@@ -268,18 +251,97 @@ def test_parse_source_understands_firmware_aliases(model: RotelModel) -> None:
 def test_previously_exposed_input_names_still_resolve(key: str) -> None:
     """Automations written for the released version keep working.
 
-    The line inputs were renamed from "Aux" to "Line" and the RA-1200 lost its
-    "Coax"/"Optical"/"Balanced" names, but the old labels must keep resolving.
+    The integrated amplifiers expose a single balanced input and call their
+    coax pairs "Optical Coax", but the old labels and the values a firmware
+    reports must keep resolving.
     """
     model = protocol.get_model(key)
     assert protocol.parse_source("Aux 1", model).value == "aux1"
     assert protocol.parse_source("Aux 2", model).value == "aux2"
+    assert protocol.parse_source("Balanced", model).value.startswith("bal_xlr")
     if key == "ra1200":
         assert protocol.parse_source("Coax 1", model).value == "coax1"
         assert protocol.parse_source("Coax 2", model).value == "coax2"
         assert protocol.parse_source("Optical 1", model).value == "coax1"
         assert protocol.parse_source("Optical 2", model).value == "coax2"
-        assert protocol.parse_source("Balanced", model).value == "bal_xlr1"
+        # One balanced input, reported as bal_xlr by the hardware.
+        assert protocol.parse_source("bal_xlr", model).value == "bal_xlr"
+        assert protocol.parse_source("bal_xlr1", model).value == "bal_xlr"
+
+
+def test_integrated_amplifiers_have_exactly_one_balanced_input() -> None:
+    """The BAL input of a Rotel amplifier is a single XLR, never a pair."""
+    for key in ("ra1572", "ra1572mkii", "ra1200", "rca10", "generic"):
+        values = [
+            item.value
+            for item in protocol.get_model(key).inputs
+            if item.value.startswith("bal")
+        ]
+        assert values == ["bal_xlr"], key
+        # And the value a firmware reports for the hardware resolves to it.
+        assert protocol.parse_source("bal_xlr", protocol.get_model(key)).value == (
+            "bal_xlr"
+        )
+
+
+def test_generic_profile_is_the_documented_input_set() -> None:
+    """The fallback profile offers the inputs of the current Rotel units."""
+    names = [item.name for item in protocol.get_model("generic").inputs]
+    assert names == [
+        "CD",
+        "Tuner",
+        "Phono",
+        "Coax 1",
+        "Coax 2",
+        "Optical 1",
+        "Optical 2",
+        "Aux",
+        "Balanced",
+        "USB",
+        "PC USB",
+        "Bluetooth",
+    ]
+
+
+def test_catalogue_has_no_duplicate_names_or_values() -> None:
+    """Every input of the catalogue is selectable and resolvable once."""
+    const = protocol_const
+    values = [item.value for item in const.ROTEL_INPUTS]
+    names = [item.name for item in const.ROTEL_INPUTS]
+    assert len(values) == len(set(values))
+    assert len(names) == len(set(names))
+    for item in const.ROTEL_INPUTS:
+        assert protocol.match_input(const.ROTEL_INPUTS, item.value) is item
+        assert protocol.match_input(const.ROTEL_INPUTS, item.name) is item
+    # The catalogue is what the input selector offers.
+    assert set(const.INPUT_LABELS) == set(values)
+
+
+@pytest.mark.parametrize(
+    ("model_key", "selected", "expected"),
+    [
+        # The profile default is kept when nothing is selected.
+        ("generic", [], None),
+        # Labels are accepted next to the protocol values.
+        ("generic", ["CD", "coax1", "Balanced"], ["cd", "coax1", "bal_xlr"]),
+        # Values the profile does not list are added from the catalogue.
+        ("ra1572", ["cd", "usb", "bal_xlr"], ["cd", "bal_xlr", "usb"]),
+        # Profile order wins over the order of the selection.
+        ("generic", ["usb", "tuner"], ["tuner", "usb"]),
+        # A selection that resolves to nothing leaves the profile alone.
+        ("generic", ["nonsense"], None),
+    ],
+)
+def test_get_model_inputs_limits_the_profile(
+    model_key: str, selected: list[str], expected: list[str] | None
+) -> None:
+    """The options flow can trim the inputs down to what a unit has."""
+    model = protocol.get_model(model_key)
+    inputs = protocol.get_model_inputs(model, selected)
+    if expected is None:
+        assert inputs == model.inputs
+    else:
+        assert [item.value for item in inputs] == expected
 
 
 def test_rbx1500_keeps_four_balanced_inputs() -> None:
@@ -348,3 +410,135 @@ def test_detected_profile_wins_over_generic() -> None:
     detected = protocol.detect_model("RA1572")
     assert detected is protocol.get_model("ra1572")
     assert detected.inputs == protocol.get_model("ra1572").inputs
+
+# --- tone controls ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0, "000"), (5, "+05"), (-5, "-05"), (10, "+10"), (-10, "-10")],
+)
+def test_tone_values_use_the_rotel_token(value: int, expected: str) -> None:
+    """Bass and treble are signed, zero padded and three digits wide."""
+    assert protocol.format_tone(value) == expected
+    assert protocol.tone_command(RotelCommand.BASS, value) == f"bass_{expected}!"
+    assert protocol.tone_command(RotelCommand.TREBLE, value) == f"treble_{expected}!"
+
+
+@pytest.mark.parametrize("payload", ["000", "+00", "0", "+07", "-07", 7, -7])
+def test_tone_replies_decode(payload: str | int) -> None:
+    """Every spelling a firmware uses for a tone level is understood."""
+    assert protocol.parse_tone(str(payload)) == int(payload)
+
+
+def test_tone_values_are_clamped_to_the_device_range() -> None:
+    """A value outside the tone block is pulled back into it."""
+    assert protocol.clamp_tone(50) == protocol.TONE_MAX_DB
+    assert protocol.clamp_tone(-50) == protocol.TONE_MIN_DB
+    assert protocol.format_tone(50) == "+10"
+
+
+@pytest.mark.parametrize("payload", ["", "loud", "++5"])
+def test_unexpected_tone_reply_is_rejected(payload: str) -> None:
+    """A reply that is not a number is an error, not a silent zero."""
+    with pytest.raises(protocol.ProtocolError):
+        protocol.parse_tone(payload)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0, "000"), (-2, "l02"), (2, "r02"), (-15, "l15"), (15, "r15")],
+)
+def test_balance_uses_the_rotel_token(value: int, expected: str) -> None:
+    """Left is negative, right is positive, the centre is ``000``."""
+    assert protocol.format_balance(value) == expected
+    assert protocol.balance_command(value) == f"balance_{expected}!"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ("000", 0),
+        ('"000"', 0),
+        ("L03", -3),
+        ("l15", -15),
+        ("R07", 7),
+        ("C", 0),
+    ],
+)
+def test_balance_replies_decode(payload: str, expected: int) -> None:
+    """Both firmware spellings of the sides are understood."""
+    assert protocol.parse_balance(payload) == expected
+
+
+@pytest.mark.parametrize("payload", ["L00", "R16", "sideways", ""])
+def test_unexpected_balance_reply_is_rejected(payload: str) -> None:
+    """An out of range or unreadable balance is an error."""
+    with pytest.raises(protocol.ProtocolError):
+        protocol.parse_balance(payload)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ("off", (False, False)),
+        ("a", (True, False)),
+        ("b", (False, True)),
+        ("a_b", (True, True)),
+        ("A+B", (True, True)),
+    ],
+)
+def test_speaker_replies_decode(payload: str, expected: tuple[bool, bool]) -> None:
+    """The four documented speaker states are understood."""
+    assert protocol.parse_speakers(payload) == expected
+
+
+def test_unexpected_speaker_reply_is_rejected() -> None:
+    """An unknown speaker state lists the known ones."""
+    with pytest.raises(protocol.ProtocolError, match="a_b"):
+        protocol.parse_speakers("c")
+
+
+@pytest.mark.parametrize(("payload", "expected"), [("0", 0), ("6", 6), ("42", 6)])
+def test_dimmer_replies_are_clamped(payload: str, expected: int) -> None:
+    """Brightness is a level between DIMMER_MIN and DIMMER_MAX."""
+    assert protocol.parse_dimmer(payload) == expected
+    assert protocol.clamp_dimmer(9) == protocol.DIMMER_MAX
+
+
+def test_dimmer_commands_cover_every_level() -> None:
+    """Each level of the select maps to one documented command."""
+    assert protocol.dimmer_command(0) == "dimmer_0!"
+    assert protocol.dimmer_command(3) == "dimmer_3!"
+    assert protocol.dimmer_command(6) == "dimmer_6!"
+    assert len(protocol_const.DIMMER_OPTIONS) == 7
+
+
+def test_model_queries_follow_the_declared_features() -> None:
+    """A profile without a tone block is never asked for one."""
+    model = protocol.get_model("ra1572")
+    assert protocol.RotelQuery.BASS in model.queries
+    assert protocol.RotelQuery.SPEAKER in model.queries
+    assert protocol.RotelQuery.RECORD_SOURCE not in model.queries
+
+    plain = protocol.RotelModel(
+        key="plain",
+        name="Plain",
+        rbc="",
+        inputs=(RotelInput("cd", "CD"),),
+        tone_control=False,
+        speaker_groups=(),
+        dimmer=False,
+    )
+    assert plain.queries == ()
+
+
+def test_selectable_inputs_cover_every_profile() -> None:
+    """The input selector never rejects a selection another profile uses."""
+    selectable = protocol.selectable_inputs()
+    allowed = {item.value for item in selectable}
+    # The catalogue comes first, so the common inputs are at the top.
+    assert selectable[: len(protocol_const.ROTEL_INPUTS)] == protocol_const.ROTEL_INPUTS
+    for model in protocol.ROTEL_MODELS.values():
+        assert {item.value for item in model.inputs} <= allowed
+    assert len(allowed) == len(selectable)
