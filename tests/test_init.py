@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fake_rotel import FakeRotel
+from fake_rotel import AUTO_UPDATE_DELAY, FakeRotel
 from homeassistant.components.media_player import MediaPlayerState
 from homeassistant.components.ssdp import SsdpServiceInfo
 from homeassistant.config_entries import ConfigEntryState
@@ -21,7 +22,7 @@ from homeassistant.const import (
     STATE_ON,
     STATE_UNAVAILABLE,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -31,9 +32,13 @@ from custom_components.rotel_control.const import (
     CONF_INPUTS,
     CONF_MODEL_PROFILE,
     CONF_POLL_INTERVAL,
+    CONF_PUSH_UPDATES,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_PORT,
     DOMAIN,
+    EVENT_COMMAND_RECEIVED,
+    ORIGIN_POLL,
+    ORIGIN_PUSH,
 )
 from custom_components.rotel_control.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -969,7 +974,9 @@ async def test_manifest_declares_discovery_correctly() -> None:
     )
 
     assert manifest["domain"] == DOMAIN
-    assert manifest["iot_class"] == "local_polling"
+    # The amplifier reports the changes it makes by itself, so the integration
+    # is not a pure poller any more.
+    assert manifest["iot_class"] == "local_push"
     assert manifest["config_flow"] is True
     assert manifest["version"]
     # Home Assistant bootstraps ssdp/zeroconf itself, so neither belongs in
@@ -1121,8 +1128,11 @@ def test_readme_documents_every_profile() -> None:
     readme = (
         Path(__file__).parent.parent / "README.md"
     ).read_text()
+    # Only the profile table: other tables may well start with a backticked
+    # lowercase word of their own.
+    table = readme.split("| Profile | Model |", 1)[1].split("\n\n", 1)[0]
 
-    documented = set(re.findall(r"^\| `([a-z0-9]+)` \|", readme, re.MULTILINE))
+    documented = set(re.findall(r"^\| `([a-z0-9]+)` \|", table, re.MULTILINE))
     assert documented == set(ROTEL_MODELS)
     for key, model in ROTEL_MODELS.items():
         if key == "rbx1500":
@@ -1130,6 +1140,257 @@ def test_readme_documents_every_profile() -> None:
             assert len(
                 [item for item in model.inputs if item.name.startswith("Balanced")]
             ) == 4
+
+
+# --- reports of the device ----------------------------------------------
+
+
+async def _async_wait_until(condition: Callable[[], bool], what: str) -> None:
+    """Wait until a background task of the integration reacted.
+
+    The listener that follows the reports of the amplifier is a background
+    task, which ``async_block_till_done`` deliberately does not wait for.
+    """
+    for _ in range(100):
+        if condition():
+            return
+        await asyncio.sleep(0.02)
+    pytest.fail(f"the coordinator never reacted to {what}")
+
+
+def _capture(events: list[Event]) -> Any:
+    """Return a bus listener that collects the events of the integration."""
+
+    @callback
+    def _on_event(event: Event) -> None:
+        events.append(event)
+
+    return _on_event
+
+
+async def test_report_of_the_device_updates_the_entities(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A change the amplifier reports on its own is applied right away."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    # No poll may run, so the state can only come from the report itself.
+    coordinator.update_interval = None
+    events: list[Event] = []
+    hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _capture(events))
+
+    await device.report(volume="20", source="phono")
+
+    await _async_wait_until(
+        lambda: coordinator.data.source is not None
+        and coordinator.data.source.value == "phono",
+        "the report of the device",
+    )
+    state = hass.states.get("media_player.living_room_amplifier")
+    assert state.attributes["source"] == "Phono"
+    assert state.attributes["volume_raw"] == "20"
+    assert state.attributes["volume_level"] == pytest.approx(0.125, abs=0.01)
+    assert coordinator.push_reports == 1
+    assert len(events) == 1
+    data = events[0].data
+    assert data["origin"] == ORIGIN_PUSH
+    assert data["host"] == "127.0.0.1"
+    assert data["port"] == device.port
+    assert data["entry_id"] == entry.entry_id
+    assert data["device_id"] is not None
+    assert data["changes"]["source"] == {"old": "tuner", "new": "phono"}
+    assert data["changes"]["volume_db"] == {
+        "old": pytest.approx(-45.0),
+        "new": pytest.approx(-50.0),
+    }
+
+
+async def test_report_of_a_field_nobody_asked_for(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A report only replaces the field it carries."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.update_interval = None
+
+    await device.report(speaker="a_b")
+
+    await _async_wait_until(
+        lambda: bool(coordinator.data.speaker_b), "the speaker report"
+    )
+    assert coordinator.data.speaker_a is True
+    assert coordinator.data.speaker_b is True
+    # Everything else survived the report.
+    assert coordinator.data.volume_db == pytest.approx(-45.0)
+    assert coordinator.data.source is not None
+    assert hass.states.get("switch.living_room_speakers_b").state == STATE_ON
+    assert hass.states.get("switch.living_room_speakers_a").state == STATE_ON
+
+
+async def test_report_of_a_repeated_value_is_not_announced(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Saying what we already know is not a change of the amplifier."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.update_interval = None
+    events: list[Event] = []
+    hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _capture(events))
+
+    await device.report(volume="30")
+    await _async_wait_until(
+        lambda: coordinator.push_reports == 1, "the repeated report"
+    )
+    await hass.async_block_till_done()
+
+    assert not events
+
+
+async def test_change_seen_by_a_poll_is_announced(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A unit that does not push is followed by the poll, and it announces."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.update_interval = None
+    events: list[Event] = []
+    hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _capture(events))
+
+    device.volume = 20  # the volume knob was turned
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.data.volume_db == pytest.approx(-50.0)
+    assert len(events) == 1
+    assert events[0].data["origin"] == ORIGIN_POLL
+    assert events[0].data["changes"]["volume_db"]["new"] == pytest.approx(-50.0)
+
+
+async def test_a_command_of_home_assistant_is_not_announced(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """An echo of our own command is no reason to disturb an automation.
+
+    The device reports the change it was told to make, once as the answer to
+    the command and once as an automatic update. Neither is a change somebody
+    made at the amplifier.
+    """
+    device = FakeRotel(auto_update=True)
+    await device.start()
+    try:
+        entry = await _async_setup(hass, device)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        events: list[Event] = []
+        hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _capture(events))
+
+        await coordinator.async_set_volume(-40.0)
+        await asyncio.sleep(AUTO_UPDATE_DELAY + 0.3)
+        await hass.async_block_till_done()
+
+        assert coordinator.data.volume_db == pytest.approx(-40.0)
+        # The device did repeat the change, and none of it was announced.
+        assert "vol_40!" in device.received
+        assert coordinator.push_reports >= 1
+        assert not events
+    finally:
+        await device.stop()
+
+
+async def test_an_event_reports_a_state_the_entities_already_show(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """An automation may read the entities straight from the event."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.update_interval = None
+    seen: list[tuple[Event, str | None]] = []
+
+    @callback
+    def _on_event(event: Event) -> None:
+        state = hass.states.get("media_player.living_room_amplifier")
+        seen.append((event, state.attributes["source"]))
+
+    hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _on_event)
+
+    # The RA-1572 reports its first optical input as "coax1".
+    await device.report(source="opt1")
+    await _async_wait_until(lambda: bool(seen), "the report of the device")
+
+    assert seen[0][0].data["changes"]["source"] == {"old": "tuner", "new": "coax1"}
+    assert seen[0][1] == "Optical Coax 1"
+
+
+async def test_reports_can_be_turned_off(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """The option stops the listener, and polling takes over its job."""
+    entry = await _async_setup(hass, device)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: DEFAULT_POLL_INTERVAL,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+            CONF_PUSH_UPDATES: False,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert not coordinator.listening
+    events: list[Event] = []
+    hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _capture(events))
+
+    device.volume = 20
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    # The state is still correct, and it is still announced: the device never
+    # pushed, the poll saw the change.
+    assert coordinator.data.volume_db == pytest.approx(-50.0)
+    assert [event.data["origin"] for event in events] == [ORIGIN_POLL]
+
+
+async def test_unload_stops_the_report_listener(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Nothing keeps reading the socket of an unloaded entry."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.listening
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not coordinator.listening
+    assert not coordinator.api.listening
+
+
+async def test_diagnostics_describe_the_reports(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A bug report shows whether the device ever reported anything."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    await device.report(volume="44")
+    await _async_wait_until(
+        lambda: coordinator.push_reports == 1, "the report of the device"
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["reports"] == {
+        "enabled": True,
+        "listener_running": True,
+        "applied": 1,
+        "events": 1,
+        "dropped": 0,
+    }
+    assert diagnostics["connection"]["listening"] is True
+    assert diagnostics["state"]["volume_db"] == pytest.approx(-38.0)
 
 
 # --- brand assets -------------------------------------------------------

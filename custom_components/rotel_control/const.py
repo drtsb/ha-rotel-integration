@@ -19,6 +19,10 @@ CONF_MODEL_PROFILE: Final = "model_profile"
 CONF_POLL_INTERVAL: Final = "poll_interval"
 #: Protocol values of the inputs the device has, empty = use the profile.
 CONF_INPUTS: Final = "inputs"
+#: React to what the amplifier reports without being asked (front panel, remote
+#: control, the Rotel app) instead of waiting for the next poll.
+CONF_PUSH_UPDATES: Final = "push_updates"
+DEFAULT_PUSH_UPDATES: Final = True
 
 # Host/port/name come from homeassistant.const.
 #: TCP port of the Rotel ASCII control interface. 9590 is used by every model
@@ -48,6 +52,9 @@ PROBE_TIMEOUT: Final = 1.0
 #: Largest amount of unterminated data kept while waiting for a ``$``. A device
 #: that never frames its replies is disconnected instead of filling memory.
 MAX_BUFFER_SIZE: Final = 4096
+#: Amount of data read from the socket in one go. Replies are a few bytes
+#: each, so anything larger is a device that streams (a status dump).
+READ_CHUNK: Final = 512
 #: Longest value cached from a device reply. Device strings end up in entity
 #: attributes and diagnostics, so they must stay short whatever the device sends.
 MAX_VALUE_LENGTH: Final = 32
@@ -69,6 +76,28 @@ PLATFORMS: Final[list[str]] = [
 # re-sent (Rotel silences the pre-outs on standby power-up until a volume is
 # applied).
 INTERLOCK_VOLUME_DELAY: Final = 0.3
+
+# --- Push updates ------------------------------------------------------
+# A Rotel with "auto update" enabled reports every change it makes by itself,
+# unframed by any question of ours. The client keeps a task reading the socket
+# for exactly that, so the entities follow the front panel without waiting for
+# the poll interval.
+#: Event fired whenever the amplifier reports a change Home Assistant did not
+#: ask for, so automations can react to the device instead of to a poll.
+EVENT_COMMAND_RECEIVED: Final = f"{DOMAIN}_command_received"
+#: Where a change came from, as reported in the event. ``command`` is a change
+#: Home Assistant itself caused, and never fires an event.
+ORIGIN_PUSH: Final = "push"
+ORIGIN_POLL: Final = "poll"
+ORIGIN_COMMAND: Final = "command"
+#: Batches of unsolicited reports kept for the listener. A device that reports
+#: faster than Home Assistant consumes them drops the oldest batch instead of
+#: growing without bound; the freshest report is always the interesting one.
+PUSH_QUEUE_SIZE: Final = 32
+#: How long a reply is still recognised as the echo of a command we sent
+#: ourselves. Rotel answers every command with the field it changed, and that
+#: answer must not be mistaken for a change made at the device.
+PUSH_ECHO_TTL: Final = 2.0
 
 # --- Discovery ----------------------------------------------------------
 # The zeroconf services are declared in manifest.json; announcements are then

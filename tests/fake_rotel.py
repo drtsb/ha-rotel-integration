@@ -9,6 +9,7 @@ terminated with ``$``. Commands carry no delimiter of their own beyond the
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 #: Terminator of a command, as documented by Rotel.
 COMMAND_TERMINATOR = "!"
@@ -16,6 +17,11 @@ COMMAND_TERMINATOR = "!"
 RESPONSE_TERMINATOR = "$"
 #: Characters that close a command.
 COMMAND_ENDS = "?!"
+
+#: How long a unit with auto update waits before repeating a change it made
+#: as an unsolicited report. Long enough to arrive after the confirmation of
+#: the command itself, exactly as a real one does.
+AUTO_UPDATE_DELAY = 0.15
 
 #: Query key -> the state attribute that answers it. ``bypass`` and ``tone``
 #: are two spellings of the same switch, and a device answers only the one its
@@ -34,6 +40,20 @@ QUERIES = {
     "treble": "treble",
     "balance": "balance",
     "speaker": "speaker",
+    "dimmer": "dimmer",
+}
+
+
+#: First word of a command -> the state attribute that command changes. The
+#: source commands carry no prefix of their own, so everything else is a
+#: source selection.
+COMMAND_ATTRIBUTES = {
+    "power": "power",
+    "mute": "mute",
+    "vol": "volume",
+    "rec": "record_source",
+    "speaker": "speaker",
+    "balance": "balance",
     "dimmer": "dimmer",
 }
 
@@ -91,6 +111,7 @@ class FakeRotel:
         fragment: bool = False,
         quote: bool = False,
         field_delay: float = 0.0,
+        auto_update: bool = False,
     ) -> None:
         """Initialise the fake device."""
         self.power = power
@@ -118,10 +139,15 @@ class FakeRotel:
         self.quote = quote
         #: Pause between the answers of a poll, like a busy device.
         self.field_delay = field_delay
+        #: Report a change as soon as it was made at the front panel, which is
+        #: what a unit with "auto update" enabled does.
+        self.auto_update = auto_update
         self.received: list[str] = []
         self.connections = 0
         self._server: asyncio.Server | None = None
         self._writers: list[asyncio.StreamWriter] = []
+        #: Delayed auto update reports, cancelled when the device stops.
+        self._reports: set[asyncio.Task[None]] = set()
         self.port = 0
 
     async def start(self) -> FakeRotel:
@@ -136,12 +162,60 @@ class FakeRotel:
         Python 3.12 makes ``Server.wait_closed()`` wait for the handlers, so the
         sockets opened by the api under test must be closed first.
         """
+        for task in self._reports:
+            task.cancel()
+        self._reports.clear()
         for writer in self._writers:
             writer.close()
         self._writers.clear()
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
+
+    async def report(self, **fields: str) -> None:
+        """Send fields the way an auto update device does: without being asked.
+
+        The state of the fake is not touched, so a test decides what the
+        amplifier "really" is and what it reports.
+        """
+        payload = "".join(_field(key, value) for key, value in fields.items())
+        for writer in self._open_writers():
+            await self._send(writer, payload)
+
+    def _open_writers(self) -> list[asyncio.StreamWriter]:
+        """Return the connections that are still open, forgetting the others."""
+        self._writers = [writer for writer in self._writers if not writer.is_closing()]
+        return list(self._writers)
+
+    def _report_later(self, writer: asyncio.StreamWriter, command: str) -> None:
+        """Report a command we just applied as an unsolicited change.
+
+        A unit with auto update enabled does not only answer the command, it
+        also announces the new state a moment later — the same message a knob
+        turned by hand produces.
+        """
+        task = asyncio.create_task(self._send_report(writer, command))
+        self._reports.add(task)
+        task.add_done_callback(self._reports.discard)
+
+    async def _send_report(self, writer: asyncio.StreamWriter, command: str) -> None:
+        """Wait for the device to catch up, then report what it changed."""
+        await asyncio.sleep(AUTO_UPDATE_DELAY)
+        with contextlib.suppress(OSError):
+            # The connection may be gone by now: a report nobody receives is
+            # what a real amplifier does when Home Assistant went away.
+            await self._send(writer, self._state_report(command))
+
+    def _state_report(self, command: str) -> str:
+        """Return the field that describes the amplifier after ``command``."""
+        name = command.removesuffix(COMMAND_TERMINATOR)
+        if name in {"bypass_on", "bypass_off"}:
+            return _field("bypass", self._reported("tone_bypass"))
+        if name in {"tone_on", "tone_off"}:
+            return _field("tone", self._reported("tone_bypass"))
+        if (attribute := COMMAND_ATTRIBUTES.get(name.partition("_")[0])) is not None:
+            return _field(attribute, self._reported(attribute))
+        return _field("source", self._reported("source"))
 
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -171,6 +245,8 @@ class FakeRotel:
                         if self.field_delay:
                             await asyncio.sleep(self.field_delay)
                         await self._send(writer, reply)
+                        if self.auto_update and "=" in reply:
+                            self._report_later(writer, command)
         except (ConnectionResetError, BrokenPipeError):  # pragma: no cover
             return
 

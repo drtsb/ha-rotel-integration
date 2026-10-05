@@ -16,8 +16,10 @@ from .const import (
     CONF_INPUTS,
     CONF_MODEL_PROFILE,
     CONF_POLL_INTERVAL,
+    CONF_PUSH_UPDATES,
     DEFAULT_MODEL_PROFILE,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_PUSH_UPDATES,
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
 )
@@ -60,6 +62,9 @@ class RotelOptionsFlow(OptionsFlow):
                 CONF_MODEL_PROFILE,
                 self.config_entry.data.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
             ),
+            CONF_PUSH_UPDATES: self.config_entry.options.get(
+                CONF_PUSH_UPDATES, DEFAULT_PUSH_UPDATES
+            ),
         }
         # The inputs of the profile in use are the suggestion: changing the
         # model offers that model's inputs instead of an empty list.
@@ -81,6 +86,9 @@ class RotelOptionsFlow(OptionsFlow):
                     CONF_MODEL_PROFILE, default=current[CONF_MODEL_PROFILE]
                 ): vol.In(MODEL_LABELS),
                 vol.Required(CONF_INPUTS, default=list(selected)): inputs_selector(),
+                vol.Required(
+                    CONF_PUSH_UPDATES, default=current[CONF_PUSH_UPDATES]
+                ): bool,
             }
         )
         return self.async_show_form(

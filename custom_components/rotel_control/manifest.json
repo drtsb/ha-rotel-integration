@@ -5,7 +5,7 @@
   "config_flow": true,
   "documentation": "https://github.com/drtsb/ha-rotel-integration",
   "integration_type": "device",
-  "iot_class": "local_polling",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/drtsb/ha-rotel-integration/issues",
   "requirements": [],
   "ssdp": [
@@ -24,5 +24,5 @@
     "_rotel-control._tcp.local.",
     "_rotel-ra._tcp.local."
   ],
-  "version": "0.3.0"
+  "version": "0.4.0"
 }

@@ -28,8 +28,16 @@ async def async_get_config_entry_diagnostics(
             "host": coordinator.api.host,
             "port": coordinator.api.port,
             "connected": coordinator.api.connected,
+            "listening": coordinator.api.listening,
             "last_update_success": coordinator.last_update_success,
             "consecutive_failures": coordinator.consecutive_failures,
+        },
+        "reports": {
+            "enabled": coordinator.push_updates,
+            "listener_running": coordinator.listening,
+            "applied": coordinator.push_reports,
+            "events": coordinator.push_events,
+            "dropped": coordinator.api.dropped_pushes,
         },
         "profile": {
             "key": coordinator.model.key,
