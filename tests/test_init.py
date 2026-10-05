@@ -46,7 +46,6 @@ from custom_components.rotel_control.diagnostics import (
 from custom_components.rotel_control.protocol import (
     ROTEL_MODELS,
     get_model,
-    volume_to_payload,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -153,7 +152,6 @@ async def test_all_platforms_are_forwarded(hass: HomeAssistant, device: FakeRote
     registry = er.async_get(hass)
 
     assert registry.async_get("media_player.living_room_amplifier")
-    assert registry.async_get("number.living_room_volume")
     assert registry.async_get("number.living_room_bass")
     assert registry.async_get("number.living_room_treble")
     assert registry.async_get("number.living_room_balance")
@@ -179,21 +177,27 @@ async def test_device_registry_entry(hass: HomeAssistant, device: FakeRotel) -> 
 
 
 async def test_media_player_state_and_volume(hass: HomeAssistant, device: FakeRotel) -> None:
-    """The media player exposes state, volume in percent and dB."""
+    """The media player exposes state and the volume on the 0..96 scale."""
     await _async_setup(hass, device)
     state = hass.states.get("media_player.living_room_amplifier")
 
     assert state is not None
     assert state.state == STATE_ON
     assert state.attributes["source"] == "Tuner"
-    # -45 dB on the -60..20 dB scale of the profile
-    assert state.attributes["volume_level"] == pytest.approx(0.188, abs=0.01)
+    # The device reported raw 30 of its 0..96 scale, and the slider shows the
+    # number of the device, so it reads 30.
+    assert state.attributes["volume_level"] == pytest.approx(0.30, abs=0.001)
     assert state.attributes["is_volume_muted"] is False
     assert state.attributes["volume_raw"] == "30"
     assert "Phono" in state.attributes["source_list"]
     features = state.attributes["supported_features"]
     assert features & 128  # SELECT_SOURCE
     assert features & 256  # TURN_OFF
+    # One position of the front panel is the granularity of the step buttons.
+    player = hass.data["entity_components"]["media_player"].get_entity(
+        "media_player.living_room_amplifier"
+    )
+    assert player.volume_step == pytest.approx(1 / 96)
 
 
 @pytest.mark.parametrize(
@@ -291,8 +295,10 @@ async def test_turn_off_and_on_go_to_the_device(hass: HomeAssistant, device: Fak
     assert hass.states.get("media_player.living_room_amplifier").state == STATE_ON
 
 
-async def test_set_volume_level_converts_to_db(hass: HomeAssistant, device: FakeRotel) -> None:
-    """A 0..1 volume is translated into a device step."""
+async def test_set_volume_level_sends_the_number_of_the_device(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A 0..1 volume is translated into a whole position of the 0..96 scale."""
     await _async_setup(hass, device)
 
     await hass.services.async_call(
@@ -303,9 +309,132 @@ async def test_set_volume_level_converts_to_db(hass: HomeAssistant, device: Fake
     )
     await hass.async_block_till_done()
 
-    model = get_model("ra1572")
-    expected = model.volume_min_db + 0.5 * model.volume_range_db
-    assert f"vol_{volume_to_payload(expected, model)}!" in device.received
+    assert "vol_50!" in device.received
+
+
+@pytest.mark.parametrize(
+    ("level", "position"),
+    [
+        (0.0, 0),
+        (0.01, 1),
+        (0.2, 20),
+        (0.25, 25),
+        (0.54, 54),
+        (0.76, 76),
+        (0.96, 96),
+        # Above the highest position of the device, so the top of the slider
+        # stays at 96 instead of sending a position that does not exist.
+        (1.0, 96),
+    ],
+)
+async def test_volume_level_maps_onto_the_number_of_the_device(
+    hass: HomeAssistant, device: FakeRotel, level: float, position: int
+) -> None:
+    """The number set on the slider is the number the amplifier is given."""
+    await _async_setup(hass, device)
+    device.received.clear()
+
+    await hass.services.async_call(
+        "media_player",
+        "volume_set",
+        {"entity_id": "media_player.living_room_amplifier", "volume_level": level},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert f"vol_{position}!" in device.received
+    state = hass.states.get("media_player.living_room_amplifier")
+    assert state.attributes["volume_level"] == pytest.approx(position / 100, abs=0.01)
+
+
+async def test_the_device_scale_is_used_up_exactly_once_per_step(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Every position of the 0..96 scale is reachable and distinct.
+
+    A rounding that collapsed two positions onto one would make the top of the
+    scale unusable, and a mapping that drifted would make the volume creep.
+    """
+    await _async_setup(hass, device)
+    device.received.clear()
+
+    reached = []
+    for position in range(97):
+        seen = len(device.received)
+        await hass.services.async_call(
+            "media_player",
+            "volume_set",
+            {
+                "entity_id": "media_player.living_room_amplifier",
+                "volume_level": position / 100,
+            },
+            blocking=True,
+        )
+        # The coordinator refreshes after every command, so the volume command
+        # is picked out of the traffic instead of taken as the last line.
+        commands = [
+            line for line in device.received[seen:] if line.startswith("vol_")
+        ]
+        assert len(commands) == 1, (position, commands)
+        reached.append(commands[0])
+
+    assert reached == [f"vol_{position}!" for position in range(97)]
+
+
+async def test_volume_up_and_down_move_one_position(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """The step buttons use the granularity of the front panel."""
+    await _async_setup(hass, device)
+    device.received.clear()
+
+    await hass.services.async_call(
+        "media_player",
+        "volume_up",
+        {"entity_id": "media_player.living_room_amplifier"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert "vol_31!" in device.received
+
+    await hass.services.async_call(
+        "media_player",
+        "volume_down",
+        {"entity_id": "media_player.living_room_amplifier"},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "media_player",
+        "volume_down",
+        {"entity_id": "media_player.living_room_amplifier"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert "vol_29!" in device.received
+
+
+async def test_no_volume_in_decibel_beside_the_media_player(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """The volume has exactly one regulator, and it is the media player.
+
+    A dB number entity next to the slider would be a second control for one
+    setting, which is the confusion this integration used to have.
+    """
+    await _async_setup(hass, device)
+    registry = er.async_get(hass)
+
+    assert registry.async_get("number.living_room_volume") is None
+    numbers = [
+        entry
+        for entry in registry.entities.values()
+        if entry.domain == "number" and entry.platform == DOMAIN
+    ]
+    assert sorted(entry.entity_id for entry in numbers) == [
+        "number.living_room_balance",
+        "number.living_room_bass",
+        "number.living_room_treble",
+    ]
 
 
 async def test_mute_toggle_service(hass: HomeAssistant, device: FakeRotel) -> None:
@@ -341,27 +470,6 @@ async def test_select_source_service(hass: HomeAssistant, device: FakeRotel) -> 
     state = hass.states.get("select.living_room_input")
     assert state.state == "Phono"
     assert "Line 1" in state.attributes["options"]
-
-
-async def test_number_entity_sets_db(hass: HomeAssistant, device: FakeRotel) -> None:
-    """The dB number entity has the range of the profile."""
-    await _async_setup(hass, device)
-    state = hass.states.get("number.living_room_volume")
-
-    assert state is not None
-    assert state.attributes["min"] == -60.0
-    assert state.attributes["max"] == 20.0
-    assert state.attributes["step"] == 0.5
-    assert state.attributes["unit_of_measurement"] == "dB"
-
-    await hass.services.async_call(
-        "number",
-        "set_value",
-        {"entity_id": "number.living_room_volume", "value": -30.0},
-        blocking=True,
-    )
-    await hass.async_block_till_done()
-    assert "vol_60!" in device.received
 
 
 # --- tone controls ------------------------------------------------------
@@ -1027,11 +1135,6 @@ async def test_state_is_readable_before_the_first_poll(
     assert attributes["tone_bypass"] is None
     assert attributes["display_dimmer"] is None
 
-    number_entity = hass.data["entity_components"]["number"].get_entity(
-        "number.living_room_volume"
-    )
-    assert number_entity.native_value is None
-
     select_entity = hass.data["entity_components"]["select"].get_entity(
         "select.living_room_input"
     )
@@ -1189,7 +1292,8 @@ async def test_report_of_the_device_updates_the_entities(
     state = hass.states.get("media_player.living_room_amplifier")
     assert state.attributes["source"] == "Phono"
     assert state.attributes["volume_raw"] == "20"
-    assert state.attributes["volume_level"] == pytest.approx(0.125, abs=0.01)
+    # A pushed raw 20, and the slider shows the number of the device.
+    assert state.attributes["volume_level"] == pytest.approx(0.20, abs=0.001)
     assert coordinator.push_reports == 1
     assert len(events) == 1
     data = events[0].data

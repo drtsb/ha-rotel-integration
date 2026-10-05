@@ -66,6 +66,10 @@ from .const import (
     TONE_MAX_DB,
     TONE_MIN_DB,
     TONE_STEP_DB,
+    VOLUME_MAX_DB,
+    VOLUME_MIN_DB,
+    VOLUME_STEP_DB,
+    VOLUME_UNITS,
     RotelInput,
 )
 
@@ -160,12 +164,13 @@ class RotelModel:
     rbc: str
     inputs: tuple[RotelInput, ...]
     record_inputs: tuple[RotelInput, ...] = ()
-    volume_min_db: float = -60.0
-    #: Kept at the value the released version used, so upgrading does not
-    #: silently narrow the range of already configured entries. Profiles whose
-    #: hardware differs declare their own bounds.
-    volume_max_db: float = 20.0
-    volume_step_db: float = 0.5
+    #: The decibel span a raw volume is mapped onto. The defaults describe the
+    #: 0..96 front panel scale of the units that report one, anchored at
+    #: ``VOLUME_MIN_DB`` so that raw 0..96 is exactly the whole span; a profile
+    #: whose hardware reports decibels declares its own bounds.
+    volume_min_db: float = VOLUME_MIN_DB
+    volume_max_db: float = VOLUME_MAX_DB
+    volume_step_db: float = VOLUME_STEP_DB
     volume_scale: VolumeScale = VolumeScale.STEPS
     #: True for processors with a second zone.
     zone2: bool = False
@@ -184,6 +189,18 @@ class RotelModel:
             raise ValueError("volume_max_db must be greater than volume_min_db")
         if self.volume_step_db <= 0:
             raise ValueError("volume_step_db must be positive")
+        if (
+            self.volume_scale is VolumeScale.STEPS
+            and self.volume_steps != VOLUME_UNITS
+        ):
+            # The payload of this scale is a position on the front panel, so a
+            # span that is not exactly the width of that panel would make the
+            # integration send positions the device cannot hold.
+            raise ValueError(
+                f"{self.volume_scale} volume scale needs exactly {VOLUME_UNITS} "
+                f"positions, {self.volume_min_db}..{self.volume_max_db} dB in "
+                f"{self.volume_step_db} dB steps is {self.volume_steps}"
+            )
 
     @property
     def volume_range_db(self) -> float:
@@ -192,7 +209,12 @@ class RotelModel:
 
     @property
     def volume_steps(self) -> int:
-        """Amount of discrete volume positions of this model."""
+        """Amount of discrete volume positions of this model.
+
+        For :attr:`VolumeScale.STEPS` this is the width of the front panel
+        scale (``VOLUME_UNITS``), which is what the payload of a ``vol_<NN>!``
+        command counts.
+        """
         return round(self.volume_range_db / self.volume_step_db)
 
     @property
@@ -780,6 +802,10 @@ __all__ = (
     "TONE_MAX_DB",
     "TONE_MIN_DB",
     "TONE_STEP_DB",
+    "VOLUME_MAX_DB",
+    "VOLUME_MIN_DB",
+    "VOLUME_STEP_DB",
+    "VOLUME_UNITS",
     "ProtocolError",
     "RotelCommand",
     "RotelInput",
