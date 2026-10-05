@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
 from conftest import PACKAGE_NAME  # noqa: F401  (registers the package)
-from fake_rotel import FakeRotel
+from fake_rotel import AUTO_UPDATE_DELAY, FakeRotel
 
 
 def make_api(
@@ -210,8 +211,6 @@ async def test_connection_error(api_module, protocol_module, device) -> None:
 
 async def test_device_that_closes_the_connection(api_module, protocol_module, socket_enabled: None) -> None:
     """A device that hangs up right away is reported as closed."""
-    import asyncio
-
     async def _reset(
         reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -312,8 +311,6 @@ async def test_unframed_data_disconnects_the_device(
     api_module, protocol_module, socket_enabled: None
 ) -> None:
     """A peer that never terminates its replies cannot fill memory."""
-    import asyncio
-
     payload = b"volume=30" * 2048  # no '$' anywhere
 
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -380,3 +377,122 @@ async def test_slow_burst_is_collected_in_one_poll(
     assert status.source is not None
     assert status.source.name == "Tuner"
     assert not status.unsupported
+
+
+# --- unsolicited reports ------------------------------------------------
+
+
+async def test_reports_of_the_device_arrive_as_pushes(
+    api_module, protocol_module, device
+) -> None:
+    """A field nobody asked for is handed to the push listener."""
+    api = make_api(api_module, protocol_module, device)
+    await api.async_get_status()
+
+    assert api.listening
+    await device.report(volume="44")
+    batch = await asyncio.wait_for(api.async_next_push(), 1.0)
+
+    assert batch == {"volume": "44"}
+    # Everything the device reports is cached, pushed or not.
+    assert api.values["volume"] == "44"
+
+    # What the device sends in one go is one batch.
+    await device.report(volume="45", mute="on")
+    assert await asyncio.wait_for(api.async_next_push(), 1.0) == {
+        "volume": "45",
+        "mute": "on",
+    }
+
+
+async def test_push_queue_drops_the_oldest_batch_when_it_overflows(
+    api_module, protocol_module, device
+) -> None:
+    """A device that reports faster than we read cannot grow the queue."""
+    from custom_components.rotel_control.const import PUSH_QUEUE_SIZE
+
+    api = make_api(api_module, protocol_module, device)
+    await api.async_get_status()
+
+    # One report per read, so every one of them becomes a batch of its own:
+    # reports the device sends back to back arrive in a single chunk instead.
+    for step in range(PUSH_QUEUE_SIZE + 5):
+        await device.report(volume=str(step))
+        await asyncio.sleep(0.01)
+
+    assert api.dropped_pushes == 5
+    first = await asyncio.wait_for(api.async_next_push(), 1.0)
+    assert first == {"volume": "5"}
+    for _ in range(PUSH_QUEUE_SIZE - 1):
+        await asyncio.wait_for(api.async_next_push(), 1.0)
+
+
+async def test_the_echo_of_our_own_command_is_not_a_report(
+    api_module, protocol_module, socket_enabled: None
+) -> None:
+    """A unit that repeats a command as an auto update stays quiet.
+
+    Rotel answers ``vol_40!`` with ``volume=40`` and an auto update firmware
+    announces the same change once more. Neither is a change made at the
+    device, so neither may reach the listener.
+    """
+    device = FakeRotel(auto_update=True)
+    await device.start()
+    api = make_api(api_module, protocol_module, device)
+    try:
+        await api.async_set_volume(-40.0)
+        await asyncio.sleep(AUTO_UPDATE_DELAY + 0.3)
+
+        # The first report that reaches the listener is the one made at the
+        # device: neither the answer to our command nor the announcement that
+        # follows it was mistaken for a change.
+        await device.report(volume="10")
+        assert await asyncio.wait_for(api.async_next_push(), 1.0) == {"volume": "10"}
+    finally:
+        await api.async_disconnect()
+        await device.stop()
+
+
+async def test_the_reader_task_follows_the_device_across_a_reconnect(
+    api_module, protocol_module, device
+) -> None:
+    """Reports keep working after the device dropped the connection."""
+    api = make_api(api_module, protocol_module, device)
+    await api.async_get_status()
+    device.drop_next = True
+    await api.async_get_status()
+    assert device.connections >= 2
+    assert api.listening
+
+    # The connection that was dropped ends its stream of reports.
+    assert await asyncio.wait_for(api.async_next_push(), 1.0) is None
+    await device.report(volume="20")
+    assert await asyncio.wait_for(api.async_next_push(), 1.0) == {"volume": "20"}
+
+
+async def test_decode_fields_only_reports_what_the_device_sent(
+    api_module, protocol_module, device
+) -> None:
+    """A single field decodes without pretending the rest was forgotten."""
+    api = make_api(api_module, protocol_module, device)
+
+    decoded = api.decode_fields({"volume": "30"})
+
+    assert decoded == {"volume_raw": "30", "volume_db": pytest.approx(-45.0)}
+    # A reply that makes no sense is skipped instead of failing the caller.
+    assert api.decode_fields({"bass": "loud"}) == {}
+    # A poll, however, has to complain about a core field it cannot read.
+    with pytest.raises(api_module.RotelApiProtocolError):
+        api.decode_fields({"volume": "loud"}, strict=True)
+
+
+async def test_disconnect_stops_the_reader(api_module, protocol_module, device) -> None:
+    """Closing the socket leaves no task reading it."""
+    api = make_api(api_module, protocol_module, device)
+    await api.async_get_status()
+    assert api.listening
+
+    await api.async_disconnect()
+
+    assert not api.listening
+    assert not api.connected

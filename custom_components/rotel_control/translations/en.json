@@ -57,11 +57,13 @@
         "data": {
           "poll_interval": "Polling interval (seconds)",
           "model_profile": "Model",
-          "inputs": "Inputs"
+          "inputs": "Inputs",
+          "push_updates": "Instant updates from the device"
         },
         "data_description": {
           "poll_interval": "How often the amplifier is asked for its state. Keep it at 2 s unless you see problems on the network.",
-          "inputs": "Only keep the inputs this amplifier has. Leave the selection untouched to use the inputs of the chosen model."
+          "inputs": "Only keep the inputs this amplifier has. Leave the selection untouched to use the inputs of the chosen model.",
+          "push_updates": "Apply what the amplifier reports on its own (front panel, remote, Rotel app) immediately and fire the rotel_control_command_received event. Turn it off to rely on polling only."
         }
       }
     }

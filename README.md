@@ -41,6 +41,12 @@ actually has (see below).
   failed attempt keeps everything you typed.
 * **Discovery**: SSDP (`manufacturer: Rotel`) and zeroconf; the announcement
   is verified against the protocol and the answering port is pre-filled.
+* **Instant updates**: a unit with *auto update* enabled reports every change
+  it makes at the front panel; the entities follow immediately instead of
+  waiting for the next poll.
+* **Events**: every change the amplifier reports fires
+  `rotel_control_command_received`, ready to be used in automations (see
+  [Events](#events)).
 * **Diagnostics**: download of the profile, connection state and the last
   snapshot for bug reports.
 * **Logo**: `custom_components/rotel_control/brand/` carries the icon and the
@@ -86,6 +92,7 @@ Options (gear icon on the integration card):
 | Polling interval | `2` s | How often the state is polled (1–300 s) |
 | Model | as configured | Switch profile without re-adding the device |
 | Inputs | the ones of the model | Keep only the inputs your amplifier has |
+| Instant updates from the device | on | Apply what the amplifier reports on its own and fire `rotel_control_command_received` |
 
 **Inputs** is the escape hatch for a unit whose front panel differs from its
 profile: it takes the protocol values of the catalogue (`coax1`, `bal_xlr`, …),
@@ -95,9 +102,11 @@ it is. The integrated amplifiers have a *single* balanced input, reported by
 the hardware as `bal_xlr`; profiles for processors with several XLR inputs
 (`bal_xlr1`…`bal_xlr4`) keep the numbering.
 
-The control protocol does **not** push state changes, so the integration polls
-the amplifier. Rotel units are polled at 2 s by default; raise the interval if
-you notice traffic on a large network.
+A task keeps reading the control connection for what the amplifier reports on
+its own, and the poll is the safety net for the many units that only answer
+questions. Rotel units are polled at 2 s by default; raise the interval if you
+notice traffic on a large network, or turn **Instant updates from the device**
+off to rely on polling alone.
 
 Three different errors are shown while adding a device: *failed to
 connect* (nothing listens on the address), *connected, but the
@@ -106,6 +115,45 @@ factory default POWER OPTION = Normal, or another controller such as
 the Rotel app already holds its single control connection), and
 *connected, but no Rotel answer* (the port is open but speaks
 something else, e.g. the web interface).
+
+### Events
+
+Every change the integration notices — pushed by the amplifier or found by the
+poll — fires `rotel_control_command_received` on the Home Assistant bus. A
+change Home Assistant caused itself (a service call, an automation, a
+dashboard) is applied to the entities but does *not* fire an event, and neither
+does a reply that only confirms a command that was just sent.
+
+```yaml
+automation:
+  - alias: "Rotel: pause the amplifier when the TV goes off"
+    triggers:
+      - trigger: event
+        event_type: rotel_control_command_received
+        event_data:
+          changes:
+            power:
+              new: false
+    actions:
+      - action: media_player.turn_off
+        target:
+          entity_id: media_player.living_room_amplifier
+```
+
+The event data carries:
+
+| Key | Description |
+| --- | --- |
+| `changes` | `{attribute: {old, new}}` for everything that moved, e.g. `volume_db`, `source`, `mute`, `bass_db`, `speaker_a` |
+| `origin` | `push` when the amplifier reported it, `poll` when the next poll noticed it |
+| `device_id` | Device registry id of the amplifier, for device triggers |
+| `entry_id`, `host`, `port` | Which amplifier reported it |
+
+Values are plain data (`source` is reported as its protocol value, `coax1`),
+and a value that is not known yet — or was not known before — is not announced,
+so the first snapshot after a restart stays quiet. Automations that should also
+react to changes Home Assistant made can use the standard `state_changed` event
+of the media player instead.
 
 ## Protocol notes
 
@@ -145,7 +193,13 @@ Notes on the implementation:
 * cached values are truncated, so nothing a device reports can grow the state
   attributes or a diagnostics download;
 * a single mutex serialises the socket because the device answers in the order
-  it receives commands;
+  it receives commands, and one task per connection owns the read side: a reply
+  that nobody was waiting for is an unsolicited report of the amplifier, which
+  is applied to the state and announced as an event;
+* the answer to a command is not a report. Each command remembers which field
+  the device is expected to send back (and for how long), so the confirmation of
+  a volume change Home Assistant just made cannot be mistaken for somebody
+  turning the knob;
 * the raw volume of the device is exposed as the `volume_raw` attribute;
 * after power-on the last known volume is re-sent, because Rotel keeps the
   pre-out relays open until a volume has been applied (the "no sound after
@@ -304,6 +358,10 @@ pytest tests/test_protocol.py -q
 * The tone controls use the `bypass`/`tone` naming of the current and the
   immediately preceding firmware. A unit that needs neither cannot have its
   bass/treble set, and no profile exposes the `tone_max`/`display` queries.
+* Whether an amplifier reports its changes on its own depends on its *auto
+  update* setting and on its firmware. A unit that never does is followed by the
+  poll only, which means a knob turn shows up after at most one polling
+  interval, with `origin: poll` in the event.
 
 ## License
 

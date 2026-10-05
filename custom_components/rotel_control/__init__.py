@@ -17,9 +17,11 @@ from .const import (
     CONF_INPUTS,
     CONF_MODEL_PROFILE,
     CONF_POLL_INTERVAL,
+    CONF_PUSH_UPDATES,
     DEFAULT_MODEL_PROFILE,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_PORT,
+    DEFAULT_PUSH_UPDATES,
     DOMAIN,
     PLATFORMS,
 )
@@ -54,14 +56,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: RotelConfigEntry) -> boo
         CONF_POLL_INTERVAL,
         entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
     )
+    push_updates: bool = entry.options.get(
+        CONF_PUSH_UPDATES,
+        entry.data.get(CONF_PUSH_UPDATES, DEFAULT_PUSH_UPDATES),
+    )
 
     model = async_resolve_model(entry)
     api = RotelApi(host, port, model)
-    coordinator = RotelCoordinator(hass, entry, api, model, poll_interval)
+    coordinator = RotelCoordinator(
+        hass, entry, api, model, poll_interval, push_updates=push_updates
+    )
 
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Registered after the platforms, so a change event is fired after the
+    # entities have written the state the event is about.
+    coordinator.async_track_changes()
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
 
