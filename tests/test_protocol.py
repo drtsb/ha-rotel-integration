@@ -134,26 +134,64 @@ def test_parse_on_off_rejects_garbage() -> None:
 # --- volume -------------------------------------------------------------
 
 
-def test_steps_scale_matches_the_front_panel_scale(model: RotelModel) -> None:
-    """The front panel index is mapped onto the dB range of the profile."""
+def test_steps_scale_is_the_front_panel_scale(model: RotelModel) -> None:
+    """The payload of this scale is the raw 0..96 of the front panel."""
     assert model.volume_scale is VolumeScale.STEPS
-    steps = model.volume_steps
-    assert protocol.volume_payload_range(model) == (0, steps)
+    assert model.volume_steps == 96
+    assert protocol.VOLUME_UNITS == 96
+    assert protocol.volume_payload_range(model) == (0, 96)
     assert protocol.volume_to_payload(model.volume_min_db, model) == 0
-    assert protocol.volume_to_payload(model.volume_max_db, model) == steps
+    assert protocol.volume_to_payload(model.volume_max_db, model) == 96
 
 
-def test_profile_defaults_keep_the_released_volume_range() -> None:
-    """Upgrading must not silently narrow the range of existing entries.
+def test_steps_scale_sends_no_position_the_device_cannot_hold(
+    model: RotelModel,
+) -> None:
+    """A volume anywhere in the dB span encodes to a payload of 0..96."""
+    for volume in (
+        model.volume_min_db,
+        -45.0,
+        -36.0,
+        (model.volume_min_db + model.volume_max_db) / 2,
+        model.volume_max_db,
+    ):
+        assert 0 <= protocol.volume_to_payload(volume, model) <= 96, volume
 
-    The released version used -60..20 dB for every profile that does not
-    declare its own bounds; a narrower default would remap the volume of
-    already configured amplifiers without any migration.
+
+def test_profile_defaults_span_the_front_panel_scale() -> None:
+    """A profile without own bounds covers exactly the 96 positions.
+
+    The default bounds are the decibel anchor of the raw scale, so every
+    profile that reports a raw volume has to end up with the width of that
+    scale — otherwise the integration would send positions the device
+    ignores.
     """
     for key, model in protocol.ROTEL_MODELS.items():
-        if key in {"rcx1570", "rcx1500", "rbx1500"}:
+        if model.volume_scale is not VolumeScale.STEPS:
             continue
-        assert (model.volume_min_db, model.volume_max_db) == (-60.0, 20.0), key
+        assert (model.volume_min_db, model.volume_max_db) == (-60.0, -12.0), key
+        assert model.volume_steps == 96, key
+
+
+def test_db_scale_profiles_declare_their_own_bounds() -> None:
+    """A profile that reports decibels is not touched by the raw default."""
+    for key in ("rcx1570", "rcx1500", "rbx1500", "rca10"):
+        model = protocol.get_model(key)
+        assert model.volume_scale is VolumeScale.DB, key
+        assert model.volume_max_db == 20.0, key
+
+
+def test_a_span_that_is_not_the_front_panel_scale_is_refused() -> None:
+    """The mismatch that used to send vol_160! cannot come back silently."""
+    with pytest.raises(ValueError, match="96 positions"):
+        RotelModel(
+            key="wrong",
+            name="Wrong",
+            rbc="WRONG",
+            inputs=(RotelInput("cd", "CD"),),
+            volume_min_db=-60.0,
+            volume_max_db=20.0,
+        )
 
 
 def test_steps_scale_round_trip(model: RotelModel) -> None:

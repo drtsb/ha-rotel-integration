@@ -75,9 +75,6 @@
       }
     },
     "number": {
-      "volume_db": {
-        "name": "Volume"
-      },
       "bass": {
         "name": "Bass"
       },

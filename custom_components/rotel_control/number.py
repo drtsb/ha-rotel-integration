@@ -1,8 +1,10 @@
-"""Number platform: volume in decibel plus the tone controls.
+"""Number platform: the tone controls of the front panel.
 
-The media player exposes the usual 0..100 % volume slider, the volume number
-is its precise equivalent in dB, and bass, treble and balance mirror the tone
-block of the front panel.
+The volume deliberately has no number entity. It lives on the media player,
+which runs on the volume scale of the device itself (the raw 0..96 of the front
+panel for the units that report one), and a second volume in decibel next to it
+would be a second source of truth for one setting. Bass, treble and balance do
+mirror the tone block of the front panel.
 """
 
 from __future__ import annotations
@@ -36,52 +38,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Rotel numbers from a config entry."""
     coordinator: RotelCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[NumberEntity] = [RotelVolumeNumber(coordinator, entry)]
+    entities: list[NumberEntity] = []
     if coordinator.model.tone_control:
         entities.append(RotelToneNumber(coordinator, entry, ROTEL_BASS))
         entities.append(RotelToneNumber(coordinator, entry, ROTEL_TREBLE))
         entities.append(RotelBalanceNumber(coordinator, entry))
     async_add_entities(entities)
-
-
-ROTEL_VOLUME = NumberEntityDescription(
-    key="volume_db",
-    translation_key="volume_db",
-    native_unit_of_measurement="dB",
-)
-
-
-class RotelVolumeNumber(RotelEntity, NumberEntity):
-    """Volume of the amplifier expressed in decibel.
-
-    The media player exposes the usual 0..100 % slider; this entity is the
-    precise equivalent, matching the 0.5 dB granularity of the front panel.
-    """
-
-    entity_description = ROTEL_VOLUME
-
-    _attr_mode = NumberMode.SLIDER
-
-    def __init__(
-        self,
-        coordinator: RotelCoordinator,
-        entry: RotelConfigEntry,
-    ) -> None:
-        """Initialise the number entity."""
-        super().__init__(coordinator, entry, ROTEL_VOLUME)
-        model = coordinator.model
-        self._attr_native_min_value = model.volume_min_db
-        self._attr_native_max_value = model.volume_max_db
-        self._attr_native_step = model.volume_step_db
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the current volume in dB."""
-        return self.data.volume_db
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set the volume in dB."""
-        await self.coordinator.async_set_volume(value)
 
 
 ROTEL_BASS = NumberEntityDescription(
@@ -192,8 +154,6 @@ __all__ = (
     "ROTEL_BALANCE",
     "ROTEL_BASS",
     "ROTEL_TREBLE",
-    "ROTEL_VOLUME",
     "RotelBalanceNumber",
     "RotelToneNumber",
-    "RotelVolumeNumber",
 )

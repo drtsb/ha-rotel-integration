@@ -24,10 +24,14 @@ actually has (see below).
 ## Features
 
 * **Media player**: power (with the Rotel power interlock), volume, mute,
-  input selection.
-* **Number**: precise volume in dB (0.5 dB steps) next to the 0–100 % slider,
-  plus **Bass** and **Treble** (±10 dB, 1 dB steps) and **Balance**
-  (−15…+15, left is negative).
+  input selection. The volume is the single volume control of this
+  integration and it runs on the scale of the amplifier itself — the raw
+  `0…96` of the front panel, mapped onto the 0…100 % slider Home Assistant
+  shows so that the number you set is the number the amplifier displays.
+* **Number**: **Bass** and **Treble** (±10 dB, 1 dB steps) and **Balance**
+  (−15…+15, left is negative). There is deliberately no volume entity: a
+  volume in dB next to the volume slider would be a second control for one
+  setting.
 * **Select**: input selection, **display brightness** (`dimmer_0!` is the
   brightest, `dimmer_6!` the dimmest) and, for RCX models, the record source
   (disabled by default because only pre-out capable setups need it).
@@ -211,17 +215,29 @@ Rotel units report the volume either as the raw position of the front panel
 scale (`0…96` on the A12/A14/RA-1572 family) or directly in decibel (the
 RCX/RBX processors). A profile declares which one it is:
 
-* `VolumeScale.STEPS` – the payload is the number of `volume_step_db` steps
-  above `volume_min_db`. For a 0…96 device with the default `-60…+20 dB` bounds
-  that maps onto `-60…-12 dB`, so the decibel value is a linear scale and not
-  the amplifier's own readout; the raw value is available as `volume_raw`.
+* `VolumeScale.STEPS` – the payload is the position on the front panel scale,
+  `vol_<NN>!` with `NN` from `0…96`. That is the only volume scale the protocol
+  speaks for these units, and it is what the media player shows: the slider
+  carries the **number of the device**, so setting 20 % sends `vol_20!` and the
+  amplifier display and the slider always read the same number. Since Home
+  Assistant gives a media player 101 steps (0…100 %) and the device has 96
+  positions, the part of the slider above 96 has no position to move to and
+  stays at the maximum. The decibel bounds of such a profile (`-60…-12 dB` in
+  0.5 dB steps by default) are only the internal anchor the rest of the
+  integration carries the position in — a linear scale and not the amplifier's
+  own readout; the raw value is available as `volume_raw`.
 * `VolumeScale.DB` – the payload is the volume in decibel, which is what the
-  processors report (`-80…+20 dB` for the RCX-1500/RBX-1500).
+  processors report (`-80…+20 dB` for the RCX-1500/RBX-1500). Such a scale has
+  no zero position to count from, so the slider spreads over the decibel range
+  instead of over the numbers of the device.
 * `VolumeScale.PERCENT` – the payload is 0…100 percent, for firmware that
   reports a percentage.
 
-A negative volume on a `STEPS` profile is read as decibel, and a volume outside
-the expected range is logged with a warning naming the profile.
+A profile that reports a raw volume must span exactly 96 positions; a
+`RotelModel` whose bounds do not is refused at import time rather than sending
+positions the device ignores. A negative volume on a `STEPS` profile is read as
+decibel, and a volume outside the expected range is logged with a warning
+naming the profile.
 
 ### Tone controls
 
@@ -262,7 +278,9 @@ from the inputs of `const.py`:
   `dataclasses.replace` (or `_line()`/`_balanced()`/`_hdmi()`) for the inputs a
   particular unit numbers differently;
 * `VolumeScale.*`, `volume_min_db`, `volume_max_db` and `volume_step_db` decide
-  how a volume is encoded;
+  how a volume is encoded; a `VolumeScale.STEPS` profile must span exactly
+  `VOLUME_UNITS` (96) positions, which is what the default bounds of
+  `-60…-12 dB` in 0.5 dB steps do;
 * `tone_control`, `tone_bypass`, `speaker_groups` and `dimmer` declare which
   extra entities a profile gets, and `RotelModel.queries` derives the queries
   that are asked from them — a profile can never ask for a control it does not

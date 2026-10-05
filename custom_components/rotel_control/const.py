@@ -206,6 +206,23 @@ INPUT_LABELS: Final[dict[str, str]] = {
     item.value: item.name for item in ROTEL_INPUTS
 }
 
+# --- Volume -------------------------------------------------------------
+#: The front panel volume scale of the units that report a raw volume (the
+#: A12/A14/RA-1572 family): 0..96 "conditional units", spelled ``vol_<NN>!`` on
+#: the wire. This is the only volume scale the protocol speaks for them, and it
+#: is what Home Assistant is shown, so it is the one thing the range of a
+#: profile has to be exactly as long as.
+VOLUME_UNITS: Final = 96
+#: Decibel the front panel scale is anchored at. Those units never report
+#: decibels themselves, so this only decides where the raw positions sit on the
+#: linear decibel scale the integration carries internally: :data:`VOLUME_UNITS`
+#: positions of :data:`VOLUME_STEP_DB` starting at :data:`VOLUME_MIN_DB`.
+VOLUME_MIN_DB: Final = -60.0
+VOLUME_STEP_DB: Final = 0.5
+#: Decibel of the topmost position of the front panel scale, i.e. the default
+#: upper bound of a profile that reports a raw volume.
+VOLUME_MAX_DB: Final = VOLUME_MIN_DB + VOLUME_UNITS * VOLUME_STEP_DB
+
 # --- Tone controls ------------------------------------------------------
 #: Bass and treble of the Rotel tone block, in dB. The device takes whole
 #: steps only, and ``000`` is the neutral position.
