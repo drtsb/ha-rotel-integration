@@ -266,6 +266,46 @@ for either generation. A device that answers neither — or no tone block at all
 — leaves the switch unavailable and lists the query in the diagnostics instead
 of failing the poll.
 
+The two spellings have **opposite senses**, which Rotel's own command lists
+give away (`tone_on!` is listed as the counterpart of `bypass_off!`,
+`tone_off!` of `bypass_on!`), so `bypass=on` and `tone=off` are the same state:
+the tone block out of the signal path. `protocol.tone_bypass_command()` and
+`protocol.tone_bypass_is_bypassed()` follow that, and the switch means "tone
+block bypassed" on either firmware.
+
+This matters more than it looks: **Rotel ships these units with the tone block
+bypassed at the factory**, and an amplifier that has the block out of the
+signal path does not apply a `bass_XX!`/`treble_XX!` command — the setting is
+simply dropped and the next poll reports the old level.
+
+The integration cannot tell a dropped command from a rejected one, so it does
+two things:
+
+* **while the bypass is known to be on**, the bass and treble numbers are
+  marked `unavailable`, so the device card offers no slider that cannot work.
+  Home Assistant also refuses a service call on an unavailable entity, so the
+  command is not even sent; the balance is a control of its own and stays
+  usable. The numbers come back with the level the amplifier reports as soon as
+  the bypass is switched off;
+* **while it cannot be told** (a device that answers neither `bypass?` nor
+  `tone?`), the numbers stay usable — unknown is not the same as bypassed — and
+  a tone command the amplifier does not confirm is logged as a warning naming
+  the bypass, because nothing else would explain it.
+
+To hear a change, switch the tone block in: `switch.<amp>_tone_bypass` off, or
+MENU → TONE BYPASS → OFF on the amplifier (the setting is stored permanently).
+
+A setting is published from the amplifier's own answer to the command
+(`RotelApi._async_command` waits up to `COMMAND_CONFIRM_TIMEOUT` for the field
+the command changes), and is deliberately **not** polled again straight
+afterwards: a poll that runs while the change is still being applied reads the
+value from *before* it and would put the old one back into the user interface.
+An amplifier that never answers a command keeps the value that was sent and is
+corrected by the next scheduled poll, and the reply of a speaker command names
+the state of both groups, so switching one follows the other. Power, volume,
+mute and the input selectors still force a refresh: a command there can change
+more than the field it names, and their answers are not read back.
+
 ### Adapting a profile
 
 Profiles live in `custom_components/rotel_control/protocol.py` and are built

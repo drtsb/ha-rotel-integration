@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -570,6 +571,191 @@ async def test_speaker_switches_use_the_explicit_commands(
     assert hass.states.get("switch.living_room_speakers_b").state == STATE_ON
 
 
+async def test_an_unanswered_speaker_command_keeps_the_other_group(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A speaker command the amplifier says nothing about touches one group.
+
+    Its answer describes both groups, but a command that was not answered
+    says nothing about the group that was not asked for, and guessing would
+    switch a speaker off that is playing.
+    """
+    device = FakeRotel(speaker="a_b", silent=frozenset({"speaker"}))
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
+            {"entity_id": "switch.living_room_speakers_a"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert hass.states.get("switch.living_room_speakers_a").state == STATE_OFF
+        assert hass.states.get("switch.living_room_speakers_b").state == STATE_ON
+    finally:
+        await device.stop()
+
+
+@pytest.mark.parametrize("auto_update", [False, True])
+@pytest.mark.parametrize(
+    ("entity_id", "value", "state"),
+    [
+        ("number.living_room_bass", -5.0, "-5.0"),
+        ("number.living_room_treble", 4.0, "4.0"),
+        ("number.living_room_balance", -7.0, "-7.0"),
+        ("select.living_room_display_brightness", "5", "5"),
+        ("switch.living_room_speakers_a", None, STATE_OFF),
+    ],
+)
+async def test_a_setting_is_not_rolled_back_while_the_device_catches_up(
+    hass: HomeAssistant,
+    socket_enabled: None,
+    entity_id: str,
+    value: float | None,
+    state: str,
+    auto_update: bool,
+) -> None:
+    """A setting a user made stays put while the amplifier applies it.
+
+    A Rotel answers ``bass_+05!`` with the level it is about to have, but
+    ``bass?`` only reports the level it has really reached a moment later.
+    Reading the value back before that has happened would answer with the
+    *previous* bass and put it into the user interface again, which is what
+    made the tone controls snap back right after a change.
+    """
+    device = FakeRotel(apply_delay=0.3, auto_update=auto_update)
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+        assert hass.states.get(entity_id).state not in {state}
+
+        if entity_id.startswith("number."):
+            await hass.services.async_call(
+                "number", "set_value", {"entity_id": entity_id, "value": value},
+                blocking=True,
+            )
+        elif entity_id.startswith("select."):
+            await hass.services.async_call(
+                "select", "select_option", {"entity_id": entity_id, "option": value},
+                blocking=True,
+            )
+        else:
+            await hass.services.async_call(
+                "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+            )
+        await hass.async_block_till_done()
+
+        assert hass.states.get(entity_id).state == state
+
+        # The device caught up, and so did the state.
+        await asyncio.sleep(0.35)
+        await hass.async_block_till_done()
+        assert hass.states.get(entity_id).state == state
+    finally:
+        await device.stop()
+
+
+async def test_a_change_the_amplifier_does_not_answer_is_corrected_by_the_poll(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A command the amplifier ignores shows up, then the next poll undoes it.
+
+    The state follows the user right away, so the interface answers at once,
+    and a device that never confirmed the command gets its real value back on
+    the next poll instead of being taken at its word forever.
+    """
+    device = FakeRotel(silent=frozenset({"bass", "dimmer"}))
+    await device.start()
+    try:
+        entry = await _async_setup(hass, device)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": "number.living_room_bass", "value": -6.0},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert "bass_-06!" in device.received
+        assert device.bass == 0
+        assert hass.states.get("number.living_room_bass").state == "-6.0"
+
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        assert hass.states.get("number.living_room_bass").state == "0.0"
+    finally:
+        await device.stop()
+
+
+async def test_the_tone_numbers_are_deactivated_while_the_bypass_is_on(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A tone control the amplifier drops is not offered as usable.
+
+    Rotel leaves the tone block out of the signal path at the factory, and a
+    block that is out of the path drops ``bass_XX!``/``treble_XX!`` commands,
+    so the sliders are marked unavailable and stop accepting a value. The
+    balance is a control of its own and keeps working, and both come back with
+    the reported level once the bypass is switched off.
+    """
+    device = FakeRotel(tone_bypass=True, bass=-4, treble=6)
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+        assert hass.states.get("switch.living_room_tone_bypass").state == STATE_ON
+        assert hass.states.get("number.living_room_bass").state == STATE_UNAVAILABLE
+        assert hass.states.get("number.living_room_treble").state == STATE_UNAVAILABLE
+        # The balance is not part of the tone block.
+        assert hass.states.get("number.living_room_balance").state == "0.0"
+
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": "number.living_room_bass", "value": -8.0},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert not any(line.startswith("bass_") for line in device.received)
+
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
+            {"entity_id": "switch.living_room_tone_bypass"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert hass.states.get("number.living_room_bass").state == "-4.0"
+        assert hass.states.get("number.living_room_treble").state == "6.0"
+    finally:
+        await device.stop()
+
+
+async def test_the_tone_numbers_stay_usable_without_a_bypass_report(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A device that never reports the bypass does not lose its tone controls.
+
+    Unknown is not the same as bypassed, so a control whose block state cannot
+    be read is left alone rather than switched off on a guess.
+    """
+    device = FakeRotel(ignore=frozenset({"bypass", "tone"}))
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+
+        assert hass.states.get("number.living_room_bass").state == "0.0"
+        assert hass.states.get("number.living_room_treble").state == "0.0"
+    finally:
+        await device.stop()
+
+
 async def test_tone_bypass_switch(hass: HomeAssistant, device: FakeRotel) -> None:
     """The tone block is bypassed and enabled again."""
     await _async_setup(hass, device)
@@ -602,14 +788,30 @@ async def test_tone_bypass_switch(hass: HomeAssistant, device: FakeRotel) -> Non
 async def test_tone_bypass_switch_on_legacy_firmware(
     hass: HomeAssistant, socket_enabled: None
 ) -> None:
-    """Firmware that answers "tone" instead of "bypass" still works."""
+    """Firmware that answers "tone" instead of "bypass" still works.
+
+    The two generations have opposite senses — Rotel's own command lists pair
+    ``tone_on!`` with ``bypass_off!`` — so on this firmware bypassing the tone
+    block is ``tone_off!``, and ``tone=on`` means the tone controls are in use.
+    """
     device = FakeRotel(legacy_tone=True)
     await device.start()
     try:
         await _async_setup(hass, device)
+        assert hass.states.get("switch.living_room_tone_bypass").state == STATE_OFF
+
         await hass.services.async_call(
             "switch",
             "turn_on",
+            {"entity_id": "switch.living_room_tone_bypass"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get("switch.living_room_tone_bypass").state == STATE_ON
+
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
             {"entity_id": "switch.living_room_tone_bypass"},
             blocking=True,
         )
@@ -618,9 +820,71 @@ async def test_tone_bypass_switch_on_legacy_firmware(
         await device.stop()
 
     assert "bypass_on!" not in device.received
+    assert "tone_off!" in device.received
     assert "tone_on!" in device.received
-    assert device.tone_bypass is True
+    assert device.tone_bypass is False
+    assert hass.states.get("switch.living_room_tone_bypass").state == STATE_OFF
+
+
+async def test_the_tone_bypass_is_read_in_the_sense_of_the_firmware(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A bypassed tone block reads as bypassed on either spelling.
+
+    ``tone=off`` is the old firmware's "tone controls off", which is the same
+    state as ``bypass=on`` on the current one.
+    """
+    device = FakeRotel(legacy_tone=True, tone_bypass=True)
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
     assert hass.states.get("switch.living_room_tone_bypass").state == STATE_ON
+
+
+async def test_an_ignored_tone_command_names_the_bypass(
+    hass: HomeAssistant, socket_enabled: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A tone control the amplifier drops is reported, not swallowed.
+
+    This is the case where the block state cannot be read, so the sliders stay
+    usable and the command is sent — and the amplifier drops it anyway. Rotel
+    units that leave the tone block out of the signal path behave exactly like
+    this, which looks precisely like a broken integration. The log has to say
+    so, because nothing else in Home Assistant would.
+    """
+    device = FakeRotel(
+        ignore=frozenset({"bypass", "tone"}),
+        silent=frozenset({"bass", "treble"}),
+    )
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+        assert hass.states.get("number.living_room_bass").state == "0.0"
+
+        with caplog.at_level(logging.WARNING):
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": "number.living_room_bass", "value": -6.0},
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+    finally:
+        await device.stop()
+
+    assert "bass_-06!" in device.received
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and record.name.startswith("custom_components.rotel_control")
+    ]
+    assert any("bypass" in message and "bass" in message for message in warnings), (
+        warnings
+    )
 
 
 async def test_display_dimmer_select(hass: HomeAssistant, device: FakeRotel) -> None:

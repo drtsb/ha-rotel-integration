@@ -109,6 +109,16 @@ class RotelQuery(StrEnum):
 #: decides the commands used from then on.
 TONE_BYPASS_QUERIES: tuple[RotelQuery, ...] = (RotelQuery.BYPASS, RotelQuery.TONE)
 
+#: Whether an ``on`` answer means *bypassed* for each spelling. The two
+#: generations disagree on the sense — Rotel's own command lists pair
+#: ``tone_on!`` with ``bypass_off!`` and ``tone_off!`` with ``bypass_on!`` — and
+#: a unit answers the command it was given, so a device reporting the bypass as
+#: ``tone=on`` has its tone controls **in** use, not bypassed.
+TONE_BYPASS_ON_IS_BYPASSED: Mapping[str, bool] = {
+    str(RotelQuery.BYPASS): True,
+    str(RotelQuery.TONE): False,
+}
+
 
 class RotelCommand(StrEnum):
     """Commands that change something, sent as ``<command>!``."""
@@ -707,6 +717,31 @@ def tone_command(command: RotelCommand, value: float) -> str:
     return build_command(command, format_tone(value))
 
 
+def tone_bypass_is_bypassed(key: str, value: str) -> bool:
+    """Decode a ``bypass=``/``tone=`` reply into "the tone block is bypassed".
+
+    ``key`` is the spelling the device answered, which is what decides the sense
+    of the answer: ``bypass=on`` has the tone block out of the signal path,
+    while ``tone=on`` is the older "tone controls on", the opposite.
+    """
+    return parse_on_off(value) == TONE_BYPASS_ON_IS_BYPASSED.get(key, True)
+
+
+def tone_bypass_state(key: str, bypass: bool) -> str:
+    """Return the ``on``/``off`` token ``key`` uses for ``bypass``.
+
+    ``bypass`` is the state the entities show — ``True`` while the tone block is
+    bypassed — so this is what inverts the command and the echo on the firmware
+    that names the switch ``tone``.
+    """
+    return "on" if bypass == TONE_BYPASS_ON_IS_BYPASSED.get(key, True) else "off"
+
+
+def tone_bypass_command(key: str, bypass: bool) -> str:
+    """Build the command that switches the tone block on or off."""
+    return build_command(key, tone_bypass_state(key, bypass))
+
+
 def clamp_balance(value: float) -> int:
     """Clamp a balance value to the L01..L15/R01..R15 range of the device."""
     return min(max(round(value), BALANCE_MIN), BALANCE_MAX)
@@ -798,6 +833,7 @@ __all__ = (
     "RESPONSE_TERMINATOR",
     "ROTEL_INPUTS",
     "ROTEL_MODELS",
+    "TONE_BYPASS_ON_IS_BYPASSED",
     "TONE_BYPASS_QUERIES",
     "TONE_MAX_DB",
     "TONE_MIN_DB",
@@ -838,6 +874,9 @@ __all__ = (
     "selectable_inputs",
     "snap_volume",
     "source_command",
+    "tone_bypass_command",
+    "tone_bypass_is_bypassed",
+    "tone_bypass_state",
     "tone_command",
     "volume_from_payload",
     "volume_is_out_of_range",

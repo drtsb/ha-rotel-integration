@@ -96,11 +96,18 @@ ROTEL_TONE_BYPASS = SwitchEntityDescription(
 
 
 class RotelToneBypassSwitch(RotelEntity, SwitchEntity):
-    """Tone bypass of the front panel.
+    """The tone bypass of the front panel.
 
     Firmware before the ``bypass`` naming reports the same switch under
-    ``tone``; the integration asks for both and uses whichever the device
-    answers, so this switch works on either generation.
+    ``tone``, where the sense of the answer is inverted (``tone_on!`` is the
+    counterpart of ``bypass_off!``). The integration asks for both and uses
+    whichever the device answers, translating in both directions, so this
+    switch means the same thing — the tone block out of the signal path — on
+    either generation.
+
+    Rotel leaves this bypassed at the factory, and an amplifier that has the
+    tone block out of the signal path drops bass and treble commands, so this
+    switch has to be off before the tone controls do anything.
     """
 
     entity_description = ROTEL_TONE_BYPASS

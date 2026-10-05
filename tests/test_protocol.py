@@ -483,6 +483,42 @@ def test_unexpected_tone_reply_is_rejected(payload: str) -> None:
         protocol.parse_tone(payload)
 
 
+def test_the_two_spellings_of_the_bypass_have_opposite_senses() -> None:
+    """``bypass=on`` and ``tone=on`` are the opposite state of the switch.
+
+    Rotel's command lists pair ``tone_on!`` with ``bypass_off!``, so the older
+    firmware answers with the sense of the tone controls and not of the
+    bypass. Getting this backwards leaves the tone block switched out while the
+    interface claims it is in use.
+    """
+    assert protocol.tone_bypass_is_bypassed("bypass", "on") is True
+    assert protocol.tone_bypass_is_bypassed("bypass", "off") is False
+    assert protocol.tone_bypass_is_bypassed("tone", "on") is False
+    assert protocol.tone_bypass_is_bypassed("tone", "off") is True
+
+
+def test_the_bypass_command_follows_the_firmware() -> None:
+    """Each spelling gets the command that means what the switch shows."""
+    assert protocol.tone_bypass_command("bypass", True) == "bypass_on!"
+    assert protocol.tone_bypass_command("bypass", False) == "bypass_off!"
+    assert protocol.tone_bypass_command("tone", True) == "tone_off!"
+    assert protocol.tone_bypass_command("tone", False) == "tone_on!"
+
+
+def test_the_bypass_echo_uses_the_token_the_device_answers() -> None:
+    """The answer to look for is the one this spelling sends."""
+    for key in ("bypass", "tone"):
+        for bypassed in (True, False):
+            state = protocol.tone_bypass_state(key, bypassed)
+            assert protocol.tone_bypass_is_bypassed(key, state) is bypassed
+
+
+def test_an_unexpected_bypass_reply_is_rejected() -> None:
+    """A bypass answer that is not a state is an error, not a guess."""
+    with pytest.raises(protocol.ProtocolError):
+        protocol.tone_bypass_is_bypassed("bypass", "maybe")
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [(0, "000"), (-2, "l02"), (2, "r02"), (-15, "l15"), (15, "r15")],

@@ -96,8 +96,20 @@ class RotelToneNumber(RotelEntity, NumberEntity):
 
     @property
     def available(self) -> bool:
-        """Only available while the amplifier reports this control."""
-        return super().available and self.native_value is not None
+        """Only available while the amplifier reports this control.
+
+        Bass and treble also go unavailable while the tone block is bypassed.
+        Rotel leaves that block out of the signal path at the factory and drops
+        the commands it is given while it is, so a slider that cannot change
+        anything should not look like it can — the value stays, and comes back
+        as soon as the bypass is switched off.
+
+        The balance is a control of its own and is not part of the tone block,
+        which is why :class:`RotelBalanceNumber` does not share this rule.
+        """
+        if not (super().available and self.native_value is not None):
+            return False
+        return self.data.tone_bypass is not True
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the level in dB."""

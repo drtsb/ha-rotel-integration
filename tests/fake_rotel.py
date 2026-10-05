@@ -107,11 +107,13 @@ class FakeRotel:
         dimmer: int = 2,
         legacy_tone: bool = False,
         ignore: frozenset[str] = frozenset(),
+        silent: frozenset[str] = frozenset(),
         drop_next: bool = False,
         fragment: bool = False,
         quote: bool = False,
         field_delay: float = 0.0,
         auto_update: bool = False,
+        apply_delay: float = 0.0,
     ) -> None:
         """Initialise the fake device."""
         self.power = power
@@ -130,8 +132,14 @@ class FakeRotel:
         self.dimmer = dimmer
         #: Firmware that reports the tone bypass as "tone" instead of "bypass".
         self.legacy_tone = legacy_tone
+        #: The spelling of the tone bypass this firmware answers.
+        self._tone_key = "tone" if legacy_tone else "bypass"
         #: Query keys the device does not answer (as an old firmware would).
         self.ignore = ignore
+        #: Command prefixes the device accepts and then says nothing about, as
+        #: a unit does when the tone block is bypassed or the command is not
+        #: part of its firmware.
+        self.silent = silent
         self.drop_next = drop_next
         #: Send every reply byte by byte, like a device with a slow UART.
         self.fragment = fragment
@@ -142,6 +150,14 @@ class FakeRotel:
         #: Report a change as soon as it was made at the front panel, which is
         #: what a unit with "auto update" enabled does.
         self.auto_update = auto_update
+        #: Seconds a command takes to become visible to a *query*. A real
+        #: amplifier answers a command with the value it is about to apply
+        #: (that is what the documentation says) but hands the level it has
+        #: really reached out to ``bass?`` and friends only once the change
+        #: has landed, so asking for a value too early reads the previous one.
+        self.apply_delay = apply_delay
+        #: ``{attribute: (deadline, value)}`` of the changes not applied yet.
+        self._due: dict[str, tuple[float, object]] = {}
         self.received: list[str] = []
         self.connections = 0
         self._server: asyncio.Server | None = None
@@ -201,6 +217,9 @@ class FakeRotel:
     async def _send_report(self, writer: asyncio.StreamWriter, command: str) -> None:
         """Wait for the device to catch up, then report what it changed."""
         await asyncio.sleep(AUTO_UPDATE_DELAY)
+        while self._due:
+            # The device announces a change once it has really made it.
+            await asyncio.sleep(0.01)
         with contextlib.suppress(OSError):
             # The connection may be gone by now: a report nobody receives is
             # what a real amplifier does when Home Assistant went away.
@@ -269,18 +288,19 @@ class FakeRotel:
 
     def _answer_query(self, name: str) -> str:
         """Return the ``key=value$`` answer of a query."""
-        if name in {"bypass", "tone"}:
-            # Only the spelling this firmware knows is answered.
-            wanted = "tone" if self.legacy_tone else "bypass"
-            if name != wanted:
-                return f"?{RESPONSE_TERMINATOR}"
         attribute = QUERIES.get(name)
         if attribute is None or name in self.ignore:
+            return f"?{RESPONSE_TERMINATOR}"
+        if attribute == "tone_bypass" and name != self._tone_key:
+            # Only the spelling this firmware knows is answered.
             return f"?{RESPONSE_TERMINATOR}"
         return _field(name, self._reported(attribute))
 
     def _reported(self, attribute: str) -> str:
         """Return the value the device reports for one of its attributes."""
+        self._flush_due()
+        if attribute == "tone_bypass":
+            return self._tone_state()
         value = {
             "power": "on" if self.power else "standby",
             "volume": str(self.volume),
@@ -292,14 +312,37 @@ class FakeRotel:
             "bass": _signed(self.bass),
             "treble": _signed(self.treble),
             "balance": _balance(self.balance),
-            "tone_bypass": "on" if self.tone_bypass else "off",
             "speaker": self.speaker,
             "dimmer": str(self.dimmer),
         }[attribute]
         return f'"{value}"' if self.quote else str(value)
 
+    def _flush_due(self) -> None:
+        """Apply the changes whose ``apply_delay`` has passed."""
+        if not self._due:
+            return
+        now = asyncio.get_running_loop().time()
+        for attribute, (deadline, value) in list(self._due.items()):
+            if deadline <= now:
+                del self._due[attribute]
+                setattr(self, attribute, value)
+
+    def _apply(self, attribute: str, value: object) -> None:
+        """Apply a value, now or after ``apply_delay``.
+
+        The reply of the command is built from ``value`` either way: a Rotel
+        answers with the level it is about to have.
+        """
+        if self.apply_delay:
+            deadline = asyncio.get_running_loop().time() + self.apply_delay
+            self._due[attribute] = (deadline, value)
+        else:
+            setattr(self, attribute, value)
+
     def _apply_command(self, command: str) -> str:
         """Apply a command and report the resulting state."""
+        if command.partition("_")[0] in self.silent:
+            return ""
         if command.startswith("rec_"):
             self.record_source = command.removeprefix("rec_")
             return _field("record_source", self.record_source)
@@ -314,26 +357,52 @@ class FakeRotel:
             return _field("mute", self._reported("mute"))
         if command.startswith(("bass_", "treble_")):
             attribute, _, payload = command.partition("_")
-            setattr(self, attribute, int(payload))
-            return _field(attribute, self._reported(attribute))
+            value = int(payload)
+            self._apply(attribute, value)
+            return _field(attribute, _signed(value))
         if command.startswith("balance_"):
-            self.balance = _parse_balance(command.removeprefix("balance_"))
-            return _field("balance", _balance(self.balance))
+            value = _parse_balance(command.removeprefix("balance_"))
+            self._apply("balance", value)
+            return _field("balance", _balance(value))
         if command.startswith("speaker_"):
             return _field("speaker", self._apply_speaker(command))
         if command.startswith("dimmer_"):
-            self.dimmer = int(command.removeprefix("dimmer_"))
-            return _field("dimmer", self.dimmer)
+            value = int(command.removeprefix("dimmer_"))
+            self._apply("dimmer", value)
+            return _field("dimmer", value)
         if command in {"bypass_on", "bypass_off"} and not self.legacy_tone:
-            self.tone_bypass = command == "bypass_on"
-            return _field("bypass", self._reported("tone_bypass"))
+            self._apply("tone_bypass", command == "bypass_on")
+            return _field("bypass", self._reported_state("tone_bypass"))
         if command in {"tone_on", "tone_off"} and self.legacy_tone:
-            self.tone_bypass = command == "tone_on"
-            return _field("tone", self._reported("tone_bypass"))
+            # "Tone on" is the tone block in use, the opposite of "bypass on".
+            self._apply("tone_bypass", command == "tone_off")
+            return _field("tone", self._reported_state("tone_bypass"))
         if command in QUERIES:  # not a command the device knows
             return f"?{RESPONSE_TERMINATOR}"
         self.source = command
         return _field("source", self.source)
+
+    def _reported_state(self, attribute: str) -> str:
+        """Return the value the device is about to have, not the one it has."""
+        if attribute == "tone_bypass":
+            return self._tone_state(
+                self._due[attribute][1] if attribute in self._due else None
+            )
+        return self._reported(attribute)
+
+    def _tone_state(self, bypass: bool | None = None) -> str:
+        """Return the ``on``/``off`` token this firmware uses for the bypass.
+
+        The two generations have opposite senses, which Rotel's own command
+        lists make plain: ``bypass_on!`` takes the tone block out of the signal
+        path, while the older ``tone_on!`` switches the tone controls in.
+        """
+        if bypass is None:
+            self._flush_due()
+            bypass = self.tone_bypass
+        if self.legacy_tone:
+            return "off" if bypass else "on"
+        return "on" if bypass else "off"
 
     def _apply_speaker(self, command: str) -> str:
         """Apply a speaker command and return the resulting speaker state.
