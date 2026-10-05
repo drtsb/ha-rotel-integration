@@ -48,6 +48,10 @@ LOGGER: logging.Logger = logging.getLogger(__package__)
 #: firmware answers something new.
 _QUIET_ATTRIBUTES: frozenset[str] = frozenset({"unsupported"})
 
+#: Debounce interval for push updates (seconds). Prevents flickering when
+#: the device sends multiple rapid reports (e.g., volume knob turns).
+PUSH_DEBOUNCE_SECONDS: float = 0.1
+
 
 @dataclass(frozen=True, slots=True)
 class RotelData:
@@ -179,6 +183,9 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         self._reported: RotelData | None = None
         self._origin: str = ORIGIN_POLL
         self._device_id: str | None = None
+        #: Debouncing for push updates: accumulate rapid reports and apply once.
+        self._pending_push: dict[str, Any] | None = None
+        self._debounce_task: asyncio.Task[None] | None = None
 
     async def _async_setup(self) -> None:
         """Open the connection once before the first poll."""
@@ -245,6 +252,31 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         task = self._listener
         return task is not None and not task.done()
 
+    @callback
+    def _async_apply_debounced(self) -> None:
+        """Apply accumulated push updates after debounce delay."""
+        if self._pending_push is None:
+            return
+        decoded = self._pending_push
+        self._pending_push = None
+        self._debounce_task = None
+        self.push_reports += 1
+        updated = self.known_state.apply(**decoded)
+        self._origin = ORIGIN_PUSH
+        self.async_set_updated_data(updated)
+
+    @callback
+    def _async_schedule_debounced(self, decoded: dict[str, Any]) -> None:
+        """Accumulate decoded fields and schedule a debounced update."""
+        if self._pending_push is None:
+            self._pending_push = decoded
+        else:
+            self._pending_push.update(decoded)
+        if self._debounce_task is None:
+            self._debounce_task = self.hass.loop.call_later(
+                PUSH_DEBOUNCE_SECONDS, self._async_apply_debounced
+            )
+
     async def _async_listen(self) -> None:
         """Apply every report the device sends, for as long as we are loaded."""
         while True:
@@ -266,6 +298,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
 
         Only the reported fields are replaced, so a device that reports the
         volume of a knob turn leaves everything else it told us alone.
+        Updates are debounced to prevent UI flickering from rapid reports.
         """
         decoded = {
             attribute: value
@@ -274,10 +307,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         }
         if not decoded:
             return
-        self.push_reports += 1
-        updated = self.known_state.apply(**decoded)
-        self._origin = ORIGIN_PUSH
-        self.async_set_updated_data(updated)
+        self._async_schedule_debounced(decoded)
 
     # --- change events ---------------------------------------------------
 
@@ -348,6 +378,10 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if self._debounce_task is not None:
+            self._debounce_task.cancel()
+            self._debounce_task = None
+        self._pending_push = None
 
     # --- helpers for the entity platforms --------------------------------
 
