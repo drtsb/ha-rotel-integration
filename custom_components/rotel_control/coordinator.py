@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import (
     VOLUME,
+    Applied,
     RotelApi,
     RotelApiConnectionError,
     RotelApiError,
@@ -370,6 +371,26 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         self._origin = ORIGIN_COMMAND
         self.async_set_updated_data(data)
 
+    @callback
+    def _async_apply_setting(self, data: RotelData, applied: Applied[Any]) -> None:
+        """Publish a setting from the answer of the amplifier to it.
+
+        What the amplifier reports about a command it has just accepted is
+        the freshest state available, so nothing is asked again: a poll that
+        runs while the change is still being applied reads the value from
+        *before* it and would put the old one back into the user interface,
+        which is how the tone controls used to snap back right after a change.
+        A value the amplifier never confirmed is reconciled by the next
+        scheduled poll instead, which is not in a hurry.
+        """
+        self._async_apply_command(data)
+        if not applied.confirmed:
+            LOGGER.debug(
+                "%s did not confirm %r; waiting for the next poll to agree",
+                self.api.host,
+                applied.value,
+            )
+
     async def async_set_power(self, power: bool) -> None:
         """Switch the amplifier on/off and refresh."""
         await self.api.async_set_power(power)
@@ -410,36 +431,68 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         await self.async_request_refresh()
 
     async def async_set_tone(self, command: RotelCommand, value: float) -> None:
-        """Set bass or treble in dB and refresh."""
+        """Set bass or treble in dB."""
         applied = await self.api.async_set_tone(command, value)
         attribute = "bass_db" if command is RotelCommand.BASS else "treble_db"
-        self._async_apply_command(self.known_state.apply(**{attribute: applied}))
-        await self.async_request_refresh()
+        self._async_apply_setting(
+            self.known_state.apply(**{attribute: applied.value}), applied
+        )
+        self._async_warn_bypassed_tone(attribute, applied)
+
+    def _async_warn_bypassed_tone(self, attribute: str, applied: Applied[Any]) -> None:
+        """Say why a tone control can be ignored, because a Rotel does that.
+
+        The tone block is bypassed at the factory on these units, and the
+        documentation is explicit that the block being out of the signal path
+        means a bass or treble command is not applied — which looks exactly
+        like a broken integration. The state is corrected by the next poll
+        either way; this only makes the cause findable.
+        """
+        if applied.confirmed or not self.model.tone_bypass:
+            return
+        LOGGER.warning(
+            "%s ignored the %s command. Rotel amplifiers leave the tone block "
+            "bypassed at the factory and ignore bass/treble until it is switched "
+            "back in — check the tone bypass switch (MENU -> TONE BYPASS -> OFF on "
+            "the amplifier).",
+            self.api.host,
+            attribute.removesuffix("_db"),
+        )
 
     async def async_set_balance(self, balance: float) -> None:
-        """Set the channel balance and refresh."""
+        """Set the channel balance."""
         applied = await self.api.async_set_balance(balance)
-        self._async_apply_command(self.known_state.apply(balance=applied))
-        await self.async_request_refresh()
+        self._async_apply_setting(
+            self.known_state.apply(balance=applied.value), applied
+        )
+        if not applied.confirmed:
+            LOGGER.warning(
+                "%s ignored the balance command, which happens on a unit whose "
+                "tone block is still set up differently than its profile",
+                self.api.host,
+            )
 
     async def async_set_tone_bypass(self, bypass: bool) -> None:
-        """Bypass or re-enable the tone block and refresh."""
+        """Bypass or re-enable the tone block."""
         applied = await self.api.async_set_tone_bypass(bypass)
-        self._async_apply_command(self.known_state.apply(tone_bypass=applied))
-        await self.async_request_refresh()
+        self._async_apply_setting(
+            self.known_state.apply(tone_bypass=applied.value), applied
+        )
 
     async def async_set_speaker(self, group: str, enabled: bool) -> None:
-        """Switch a speaker group and refresh."""
-        await self.api.async_set_speaker(group, enabled)
-        attribute = "speaker_a" if group.casefold() == "a" else "speaker_b"
-        self._async_apply_command(self.known_state.apply(**{attribute: enabled}))
-        await self.async_request_refresh()
+        """Switch a speaker group."""
+        applied = await self.api.async_set_speaker(group, enabled)
+        speaker_a, speaker_b = applied.value
+        # The amplifier answers with the state of both groups, so both follow
+        # from one command. The group it did not talk about keeps its value.
+        self._async_apply_setting(
+            self.known_state.apply(speaker_a=speaker_a, speaker_b=speaker_b), applied
+        )
 
     async def async_set_dimmer(self, level: float) -> None:
-        """Set the display brightness and refresh."""
+        """Set the display brightness."""
         applied = await self.api.async_set_dimmer(level)
-        self._async_apply_command(self.known_state.apply(dimmer=applied))
-        await self.async_request_refresh()
+        self._async_apply_setting(self.known_state.apply(dimmer=applied.value), applied)
 
 
 __all__ = (

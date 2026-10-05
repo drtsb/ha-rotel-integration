@@ -49,6 +49,14 @@ DRAIN_MAX_TIMEOUT: Final = 1.0
 #: fast instead of blocking the config flow.
 PROBE_CONNECT_TIMEOUT: Final = 2.0
 PROBE_TIMEOUT: Final = 1.0
+#: How long a command waits for the amplifier to answer with the field it
+#: changed. A Rotel confirms a command (``bass_+05!`` -> ``bass=+05$``), and
+#: that answer is the freshest reading of the setting: asking the amplifier
+#: for its state again right afterwards can only return a value from *before*
+#: the change, which is what made a setting snap back. A unit that answers
+#: nothing must not make a change feel stuck, so the wait is short and a
+#: silence is not an error.
+COMMAND_CONFIRM_TIMEOUT: Final = 0.5
 #: Largest amount of unterminated data kept while waiting for a ``$``. A device
 #: that never frames its replies is disconnected instead of filling memory.
 MAX_BUFFER_SIZE: Final = 4096

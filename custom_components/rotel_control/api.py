@@ -32,6 +32,7 @@ from functools import partial
 from typing import Any, Self
 
 from .const import (
+    COMMAND_CONFIRM_TIMEOUT,
     CONNECT_TIMEOUT,
     DRAIN_MAX_TIMEOUT,
     DRAIN_TIMEOUT,
@@ -58,6 +59,8 @@ from .protocol import (
     clamp_dimmer,
     clamp_tone,
     dimmer_command,
+    format_balance,
+    format_tone,
     match_input,
     parse_balance,
     parse_dimmer,
@@ -69,6 +72,9 @@ from .protocol import (
     parse_volume_number,
     snap_volume,
     source_command,
+    tone_bypass_command,
+    tone_bypass_is_bypassed,
+    tone_bypass_state,
     tone_command,
     volume_from_payload,
     volume_is_out_of_range,
@@ -135,6 +141,22 @@ class RotelApiClosedError(RotelApiConnectionError):
 
 class RotelApiProtocolError(RotelApiError):
     """The device answered with something we cannot interpret."""
+
+
+@dataclass(frozen=True, slots=True)
+class Applied[T]:
+    """What a command made of a setting, and whether the device said so.
+
+    ``value`` is what the entities should show: the level the amplifier
+    reported once it has answered, and the one that was sent until then.
+    ``confirmed`` tells the two apart, so the caller knows whether the
+    amplifier can be asked for its state right away — asking it while it is
+    still applying a change reads the value from *before* it and would undo
+    the change the user just made.
+    """
+
+    value: T
+    confirmed: bool
 
 
 @dataclass(slots=True)
@@ -206,9 +228,15 @@ class _Exchange:
     is finished as soon as every required field arrived *and* the device went
     quiet again (the rest of a burst follows the answer we asked for), or with
     a timeout naming the fields that never came.
+
+    A command is not held to that rule: it asks for nothing in particular, and
+    waiting for a field it names is a convenience, so it ends with whatever
+    the device managed to say instead of failing.
     """
 
-    def __init__(self, required: set[str], timeout: float) -> None:
+    def __init__(
+        self, required: set[str], timeout: float, *, strict: bool = True
+    ) -> None:
         """Start waiting for ``required`` fields, giving up after ``timeout``."""
         loop = asyncio.get_running_loop()
         self.required = required
@@ -216,6 +244,8 @@ class _Exchange:
         #: A command asks nothing in particular, so it is complete as soon as
         #: the device stops answering it.
         self.satisfied = not required
+        #: Whether a field that never came is an error.
+        self.strict = strict
         self.future: asyncio.Future[dict[str, str]] = loop.create_future()
         self._loop = loop
         self._deadline = loop.time() + timeout
@@ -276,10 +306,15 @@ class _Exchange:
             self._complete()
             return
         if missing := sorted(self.required - self.received.keys()):
-            self.fail(
-                RotelApiProtocolError(f"Timeout waiting for {', '.join(missing)}")
+            if self.strict:
+                self.fail(
+                    RotelApiProtocolError(f"Timeout waiting for {', '.join(missing)}")
+                )
+                return
+            LOGGER.debug(
+                "Rotel did not answer %s in time, keeping what it did say",
+                ", ".join(missing),
             )
-            return
         self._complete()
 
     def _complete(self) -> None:
@@ -599,16 +634,24 @@ class RotelApi:
         *,
         required: set[str] | None = None,
         echo: Mapping[str, str | None] | None = None,
+        strict: bool = True,
+        timeout: float | None = None,
     ) -> dict[str, str]:
         """Send ``lines`` and return the fields the device reported.
 
         Reading stops as soon as every key of ``required`` has been seen plus
         the rest of the burst that follows it, so a poll returns a complete
-        snapshot.
+        snapshot. ``strict`` decides what a field that never comes means: a
+        poll has to fail without it, while a command simply ends up with what
+        the device did say.
         """
         await self._async_open_locked()
         self._expect_echo(echo)
-        exchange = _Exchange(required or set(), self._socket_timeout)
+        exchange = _Exchange(
+            required or set(),
+            self._socket_timeout if timeout is None else timeout,
+            strict=strict,
+        )
         self._waiters.append(exchange)
         try:
             for line in lines:
@@ -644,21 +687,46 @@ class RotelApi:
                 )
 
     async def _async_command(
-        self, line: str, *, echo: Mapping[str, str | None] | None = None
-    ) -> None:
-        """Send a command and keep the late fields it may trigger.
+        self,
+        line: str,
+        *,
+        echo: Mapping[str, str | None] | None = None,
+        confirm: str | None = None,
+    ) -> dict[str, str]:
+        """Send a command and return the fields the device reported for it.
 
         ``echo`` says which fields the device is going to answer with, so a
         reply that arrives after this exchange is over is still recognised as
         the confirmation of our own command.
+
+        ``confirm`` names the field the command changes, which the exchange
+        then waits for (see :data:`COMMAND_CONFIRM_TIMEOUT`). That answer is
+        what a setting is published from: it is the freshest reading of the
+        amplifier there is, whereas asking the amplifier for its whole state
+        afterwards can only return what it reports — a value it has not
+        applied yet when the tone block is still busy. A command the device
+        ignores is not an error, it just comes back unconfirmed.
         """
+        required = {confirm} if confirm is not None else None
         async with self._lock:
             try:
-                await self._async_exchange_locked([line], echo=echo)
+                return await self._async_exchange_locked(
+                    [line],
+                    required=required,
+                    echo=echo,
+                    strict=required is None,
+                    timeout=None if required is None else COMMAND_CONFIRM_TIMEOUT,
+                )
             except RotelApiConnectionError:
                 LOGGER.debug("Rotel: retrying %r after connection error", line)
                 await self._async_close_locked()
-                await self._async_exchange_locked([line], echo=echo)
+                return await self._async_exchange_locked(
+                    [line],
+                    required=required,
+                    echo=echo,
+                    strict=required is None,
+                    timeout=None if required is None else COMMAND_CONFIRM_TIMEOUT,
+                )
 
     # --- commands --------------------------------------------------------
 
@@ -745,7 +813,7 @@ class RotelApi:
         for key in TONE_KEYS:
             if (payload := fields.get(key)) is None:
                 continue
-            put("tone_bypass", parse_on_off, payload, key)
+            put("tone_bypass", partial(tone_bypass_is_bypassed, key), payload, key)
             break
 
         if (payload := fields.get(SPEAKER)) is not None:
@@ -878,8 +946,13 @@ class RotelApi:
 
     # --- tone controls ---------------------------------------------------
 
-    async def async_set_tone(self, command: RotelCommand, value: float) -> int:
-        """Set bass or treble and return the number of dB the device accepted."""
+    async def async_set_tone(self, command: RotelCommand, value: float) -> Applied[int]:
+        """Set bass or treble and return the number of dB the device applied.
+
+        The device answers a tone command with the level it applied, so that
+        answer is waited for: it is the one reading of the tone block that is
+        not a guess.
+        """
         if command is RotelCommand.BASS:
             field = BASS
         elif command is RotelCommand.TREBLE:
@@ -887,40 +960,54 @@ class RotelApi:
         else:
             raise ValueError(f"{command} is not a tone control")
         clamped = clamp_tone(value)
-        reported = f"{clamped:+03d}" if clamped else "000"
-        await self._async_command(
-            tone_command(command, clamped), echo={field: reported}
+        reported = format_tone(clamped)
+        answered = await self._async_command(
+            tone_command(command, clamped), echo={field: reported}, confirm=field
         )
         self._values[field] = reported
-        return clamped
+        return self._applied(field, answered, clamped, parse_tone)
 
-    async def async_set_balance(self, balance: float) -> int:
-        """Set the channel balance and return the value the device accepted.
+    async def async_set_balance(self, balance: float) -> Applied[int]:
+        """Set the channel balance and return the value the device applied.
 
         Negative is left, positive is right, ``0`` re-centres it.
         """
         clamped = clamp_balance(balance)
-        reported = (
-            "000" if not clamped else f"{'L' if clamped < 0 else 'R'}{abs(clamped):02d}"
+        reported = format_balance(clamped)
+        answered = await self._async_command(
+            balance_command(clamped), echo={BALANCE: reported.upper()}, confirm=BALANCE
         )
-        await self._async_command(balance_command(clamped), echo={BALANCE: reported})
-        self._values[BALANCE] = reported
-        return clamped
+        self._values[BALANCE] = reported.upper()
+        return self._applied(BALANCE, answered, clamped, parse_balance)
 
-    async def async_set_tone_bypass(self, bypass: bool) -> bool:
-        """Bypass or re-enable the tone block."""
+    async def async_set_tone_bypass(self, bypass: bool) -> Applied[bool]:
+        """Bypass or re-enable the tone block.
+
+        The two firmware generations disagree on the sense of the switch —
+        ``bypass_on!`` takes the tone block out of the signal path while the
+        older ``tone_on!`` puts it in — so the command follows the spelling this
+        device answered to ``bypass?``/``tone?``.
+        """
         key = self._tone_key or TONE_KEYS[0]
-        state = "on" if bypass else "off"
-        await self._async_command(f"{key}_{state}!", echo={key: state})
+        state = tone_bypass_state(key, bypass)
+        answered = await self._async_command(
+            tone_bypass_command(key, bypass), echo={key: state}, confirm=key
+        )
         self._values[key] = state
-        return bypass
+        return self._applied(
+            key, answered, bypass, partial(tone_bypass_is_bypassed, key)
+        )
 
-    async def async_set_speaker(self, group: str, enabled: bool) -> bool:
+    async def async_set_speaker(
+        self, group: str, enabled: bool
+    ) -> Applied[tuple[bool | None, bool | None]]:
         """Switch one speaker group on or off.
 
-        The device reports the *result* of the change (``speaker=a``, ``b``,
-        ``a_b`` or ``off``), and this optimistic value assumes the command was
-        accepted; the next poll corrects it either way.
+        The device answers with the *result* of the change (``speaker=a``,
+        ``b``, ``a_b`` or ``off``), which describes both groups at once, so
+        both are returned instead of only the group that was asked for. An
+        answer that is missing or unreadable leaves the other group ``None``:
+        what it is doing is not something this command can tell.
         """
         token = group.strip().casefold()
         if token not in self._model.speaker_groups:
@@ -933,19 +1020,53 @@ class RotelApi:
             ("b", True): RotelCommand.SPEAKER_B_ON,
             ("b", False): RotelCommand.SPEAKER_B_OFF,
         }[(token, enabled)]
+        asked: tuple[bool | None, bool | None] = (
+            (enabled, None) if token == "a" else (None, enabled)
+        )
         # Any answer counts: the device reports the resulting state of both
         # groups, which is not the command that was sent.
-        await self._async_command(build_command(command), echo={SPEAKER: None})
-        return enabled
+        answered = await self._async_command(
+            build_command(command), echo={SPEAKER: None}, confirm=SPEAKER
+        )
+        if (payload := answered.get(SPEAKER)) is None:
+            LOGGER.debug("Rotel did not confirm the speaker command (%s)", command)
+            return Applied(asked, False)
+        groups = self._parse(SPEAKER, parse_speakers, payload)
+        if groups is None:
+            return Applied(asked, False)
+        return Applied(groups, True)
 
-    async def async_set_dimmer(self, level: float) -> int:
+    async def async_set_dimmer(self, level: float) -> Applied[int]:
         """Set the front display brightness (``0`` is the brightest)."""
         clamped = clamp_dimmer(level)
-        await self._async_command(
-            dimmer_command(clamped), echo={DIMMER: str(clamped)}
+        answered = await self._async_command(
+            dimmer_command(clamped), echo={DIMMER: str(clamped)}, confirm=DIMMER
         )
         self._values[DIMMER] = str(clamped)
-        return clamped
+        return self._applied(DIMMER, answered, clamped, parse_dimmer)
+
+    def _applied[T](
+        self,
+        field: str,
+        answered: Mapping[str, str],
+        value: T,
+        parser: Callable[[str], T],
+    ) -> Applied[T]:
+        """Turn the answer to a command into the value the entities show.
+
+        A device that answered is the truth even when it clamped the command
+        or reports a level of its own, so that is what is published. A device
+        that stayed silent leaves the value that was sent in place, marked as
+        unconfirmed so the caller knows the amplifier may disagree.
+        """
+        if (payload := answered.get(field)) is None:
+            LOGGER.debug("Rotel did not confirm the %s command", field)
+            return Applied(value, False)
+        applied = self._parse(field, parser, payload)
+        if applied is None:
+            return Applied(value, False)
+        self._values[field] = payload
+        return Applied(applied, True)
 
     async def async_validate(self) -> dict[str, Any]:
         """Validate the connection and return basic device information."""
@@ -1022,6 +1143,7 @@ class RotelApi:
 
 
 __all__ = (
+    "Applied",
     "RotelApi",
     "RotelApiClosedError",
     "RotelApiConnectionError",
