@@ -155,12 +155,16 @@ SOURCE_OPTICAL2: Final = RotelInput(
 )
 #: The line level input of the RC/RA series. Older units number it (``aux1``)
 #: and some report it as ``line1``, both resolve to this one entry.
+#: Named in upper case so Google Home and other Matter controllers render it
+#: as an audio label ("AUX") rather than a sentence-cased word.
 SOURCE_AUX: Final = RotelInput(
-    "aux", "Aux", "mdi:audio-input", ("aux1", "line1", "line 1")
+    "aux", "AUX", "mdi:audio-input", ("aux1", "line1", "line 1")
 )
 #: Front USB of the models with a USB input. ``pcusb`` below is the *PC-USB*
-#: input, which is a different physical connector.
-SOURCE_USB: Final = RotelInput("usb", "USB", "mdi:usb", ("usb1", "front usb"))
+#: input, which is a different physical connector. The trailing "Audio" makes
+#: the voice assistant answer "USB Audio" instead of the bare "USB", which a
+#: controller could otherwise confuse with a PC-USB or storage device.
+SOURCE_USB: Final = RotelInput("usb", "USB Audio", "mdi:usb", ("usb1", "front usb"))
 SOURCE_BLUETOOTH: Final = RotelInput(
     "bluetooth", "Bluetooth", "mdi:bluetooth", ("bt", "bluetooth1")
 )

@@ -44,13 +44,19 @@ class RotelEntity(CoordinatorEntity[RotelCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Group all entities of one amplifier under a single device."""
-        api = self.coordinator.api
+        """Group all entities of one amplifier under a single device.
+
+        The identifier is the config entry id rather than the host: two
+        amplifiers behind the same IP (different ports) stay separate, and a
+        device that moves to another host keeps its registry entry. Every
+        platform reads this same property, so the media player, the input
+        selector and the speaker switches are always one Matter device.
+        """
         return DeviceInfo(
-            identifiers={(DOMAIN, api.host)},
+            identifiers={(DOMAIN, self._entry.entry_id)},
             manufacturer="Rotel",
             model=self.coordinator.model.name,
             name=self._entry.title,
-            configuration_url=api.base_url,
+            configuration_url=self.coordinator.api.base_url,
             sw_version=self.data.firmware,
         )

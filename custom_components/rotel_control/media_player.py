@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.media_player import (
+    MediaPlayerDeviceClass,
     MediaPlayerEntity,
     MediaPlayerEntityDescription,
     MediaPlayerEntityFeature,
     MediaPlayerState,
+    MediaType,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -56,6 +58,17 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
     """
 
     entity_description = ROTEL_MEDIA_PLAYER
+
+    #: Matter (Speaker 0x0022) and Google Home recognise the device as an
+    #: audio amplifier rather than a generic switch or TV only because this
+    #: attribute is set. Without it the media player has no device class and
+    #: the Matter Hub maps it to an OnOffPlugInUnit — a light switch.
+    _attr_device_class = MediaPlayerDeviceClass.SPEAKER
+
+    #: Tells controllers the device plays music, which is what an amplifier
+    #: does. Helps Google Home render the right icon and offer the right
+    #: voice actions.
+    _attr_media_content_type = MediaType.MUSIC
 
     _attr_supported_features = (
         MediaPlayerEntityFeature.VOLUME_SET

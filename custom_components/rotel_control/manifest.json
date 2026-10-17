@@ -47,5 +47,5 @@
         "_rotel-control._tcp.local.",
         "_rotel-ra._tcp.local."
     ],
-    "version": "0.4.5"
+    "version": "0.5.0"
 }
