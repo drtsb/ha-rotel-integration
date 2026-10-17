@@ -36,6 +36,7 @@ from .const import (
     CONNECT_TIMEOUT,
     DRAIN_MAX_TIMEOUT,
     DRAIN_TIMEOUT,
+    IDLE_TIMEOUT,
     INTERLOCK_VOLUME_DELAY,
     MAX_BUFFER_SIZE,
     MAX_VALUE_LENGTH,
@@ -373,6 +374,8 @@ class RotelApi:
         self._last_volume_db: float | None = None
         #: Which of ``TONE_KEYS`` this firmware answers, ``None`` until told.
         self._tone_key: str | None = None
+        #: Wall time of the last exchange, used to close idle connections.
+        self._last_activity: float = 0.0
 
     @property
     def host(self) -> str:
@@ -455,6 +458,7 @@ class RotelApi:
             ) from err
         self._reader, self._writer = reader, writer
         self._buffer = ""
+        self._last_activity = asyncio.get_running_loop().time()
         self._read_task = asyncio.create_task(
             self._async_read_loop(reader), name=f"Rotel read {self._host}:{self._port}"
         )
@@ -489,12 +493,28 @@ class RotelApi:
         replies of a poll and the unsolicited reports of the device be told
         apart reliably: an exchange that is still collecting gets the fields,
         and whatever nobody was waiting for is a push.
+
+        An idle connection keeps the amplifier awake, so the read also times
+        out after a quiet period: the socket is closed and the next exchange
+        opens a fresh one, giving the device a chance to engage Auto Power Down.
         """
         writer = self._writer
         error: RotelApiError = RotelApiClosedError("Device closed the connection")
         try:
             while True:
-                data = await reader.read(READ_CHUNK)
+                try:
+                    data = await asyncio.wait_for(
+                        reader.read(READ_CHUNK), timeout=IDLE_TIMEOUT
+                    )
+                except TimeoutError:
+                    LOGGER.debug(
+                        "Rotel: idle timeout on %s after %.0fs, closing the "
+                        "connection so the amplifier can go to standby",
+                        self._host,
+                        IDLE_TIMEOUT,
+                    )
+                    error = RotelApiClosedError("Idle connection closed")
+                    break
                 if not data:
                     break
                 self._buffer += data.decode("ascii", "ignore")
@@ -647,6 +667,7 @@ class RotelApi:
         """
         await self._async_open_locked()
         self._expect_echo(echo)
+        self._last_activity = asyncio.get_running_loop().time()
         exchange = _Exchange(
             required or set(),
             self._socket_timeout if timeout is None else timeout,

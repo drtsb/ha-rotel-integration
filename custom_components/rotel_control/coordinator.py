@@ -35,6 +35,7 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
     EVENT_COMMAND_RECEIVED,
+    MIN_PUSH_POLL_INTERVAL,
     ORIGIN_COMMAND,
     ORIGIN_POLL,
     ORIGIN_PUSH,
@@ -165,13 +166,15 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             LOGGER,
             config_entry=config_entry,
             name=f"{DOMAIN} ({config_entry.title})",
-            update_interval=timedelta(seconds=poll_interval),
+            update_interval=timedelta(seconds=self._effective_interval(poll_interval, push_updates)),
             always_update=False,
         )
         self.api = api
         self.model = model
         #: Whether to react to what the device reports without being asked.
         self.push_updates = push_updates
+        #: Poll interval the user asked for, so the coordinator can restore it.
+        self._requested_interval = poll_interval
         #: Consecutive failed polls, surfaced through diagnostics.
         self.consecutive_failures = 0
         #: Reports applied and events fired, for the diagnostics download.
@@ -185,7 +188,20 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         self._device_id: str | None = None
         #: Debouncing for push updates: accumulate rapid reports and apply once.
         self._pending_push: dict[str, Any] | None = None
-        self._debounce_task: asyncio.Task[None] | None = None
+        self._debounce_handle: asyncio.TimerHandle | None = None
+
+    @staticmethod
+    def _effective_interval(poll_interval: int, push_updates: bool) -> int:
+        """Poll interval, slowed down when push updates carry the state.
+
+        A device that reports every change on its own does not need a poll
+        every few seconds: a slow poll is enough to reconcile anything the
+        push missed, and it also gives the amplifier a quiet period in which
+        its Auto Power Down timer can engage.
+        """
+        if push_updates:
+            return max(poll_interval, MIN_PUSH_POLL_INTERVAL)
+        return poll_interval
 
     async def _async_setup(self) -> None:
         """Open the connection once before the first poll."""
@@ -259,7 +275,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             return
         decoded = self._pending_push
         self._pending_push = None
-        self._debounce_task = None
+        self._debounce_handle = None
         self.push_reports += 1
         updated = self.known_state.apply(**decoded)
         self._origin = ORIGIN_PUSH
@@ -272,8 +288,8 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             self._pending_push = decoded
         else:
             self._pending_push.update(decoded)
-        if self._debounce_task is None:
-            self._debounce_task = self.hass.loop.call_later(
+        if self._debounce_handle is None:
+            self._debounce_handle = self.hass.loop.call_later(
                 PUSH_DEBOUNCE_SECONDS, self._async_apply_debounced
             )
 
@@ -378,9 +394,9 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        if self._debounce_task is not None:
-            self._debounce_task.cancel()
-            self._debounce_task = None
+        if self._debounce_handle is not None:
+            self._debounce_handle.cancel()
+            self._debounce_handle = None
         self._pending_push = None
 
     # --- helpers for the entity platforms --------------------------------

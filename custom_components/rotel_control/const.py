@@ -30,9 +30,14 @@ DEFAULT_PUSH_UPDATES: Final = True
 DEFAULT_PORT: Final = 9590
 #: Ports that are probed when discovery did not announce a usable one.
 CANDIDATE_PORTS: Final = (DEFAULT_PORT, 9600, 9500)
-DEFAULT_POLL_INTERVAL: Final = 2
+DEFAULT_POLL_INTERVAL: Final = 30
 MIN_POLL_INTERVAL: Final = 1
 MAX_POLL_INTERVAL: Final = 300
+#: Minimum poll interval when push updates are enabled, so the device can idle.
+MIN_PUSH_POLL_INTERVAL: Final = 1800
+#: How long the client keeps a connection open after the last exchange before
+#: closing it, giving an amplifier with Auto Power Down a chance to engage.
+IDLE_TIMEOUT: Final = 300.0
 
 # --- Networking ---------------------------------------------------------
 PORT_MIN: Final = 1
@@ -63,60 +68,39 @@ MAX_BUFFER_SIZE: Final = 4096
 #: Amount of data read from the socket in one go. Replies are a few bytes
 #: each, so anything larger is a device that streams (a status dump).
 READ_CHUNK: Final = 512
-#: Longest value cached from a device reply. Device strings end up in entity
-#: attributes and diagnostics, so they must stay short whatever the device sends.
-MAX_VALUE_LENGTH: Final = 32
-
-# Model profile used when the device does not report its model. Add new
-# profiles to protocol.py (ROTEL_MODELS) — no other file needs changes.
-DEFAULT_MODEL_PROFILE: Final = "ra1572"
-
-# --- Entities -----------------------------------------------------------
-PLATFORMS: Final[list[str]] = [
-    "media_player",
-    "number",
-    "select",
-    "sensor",
-    "switch",
-]
+#: When a command produces a reply field, keep an echo marker for that long
+#: so an unsolicited report that races the command answer is still treated as
+#: the confirmation.
+PUSH_ECHO_TTL: Final = 2.0
+#: Size of the queue that hands unsolicited reports to the listener.
+PUSH_QUEUE_SIZE: Final = 32
 
 # How long to wait after a power-on before the interlock volume command must be
 # re-sent (Rotel silences the pre-outs on standby power-up until a volume is
 # applied).
 INTERLOCK_VOLUME_DELAY: Final = 0.3
-
-# --- Push updates ------------------------------------------------------
-# A Rotel with "auto update" enabled reports every change it makes by itself,
-# unframed by any question of ours. The client keeps a task reading the socket
-# for exactly that, so the entities follow the front panel without waiting for
-# the poll interval.
-#: Event fired whenever the amplifier reports a change Home Assistant did not
-#: ask for, so automations can react to the device instead of to a poll.
-EVENT_COMMAND_RECEIVED: Final = f"{DOMAIN}_command_received"
-#: Where a change came from, as reported in the event. ``command`` is a change
-#: Home Assistant itself caused, and never fires an event.
-ORIGIN_PUSH: Final = "push"
-ORIGIN_POLL: Final = "poll"
-ORIGIN_COMMAND: Final = "command"
-#: Batches of unsolicited reports kept for the listener. A device that reports
-#: faster than Home Assistant consumes them drops the oldest batch instead of
-#: growing without bound; the freshest report is always the interesting one.
-PUSH_QUEUE_SIZE: Final = 32
-#: How long a reply is still recognised as the echo of a command we sent
-#: ourselves. Rotel answers every command with the field it changed, and that
-#: answer must not be mistaken for a change made at the device.
-PUSH_ECHO_TTL: Final = 2.0
-
-# --- Discovery ----------------------------------------------------------
-# The zeroconf services are declared in manifest.json; announcements are then
-# filtered by ROTEL_NAME_MARKERS and verified against the protocol.
-#: Names that identify a Rotel in an SSDP/mDNS announcement.
-ROTEL_NAME_MARKERS: Final[tuple[str, ...]] = ("rotel",)
-
-
-# --- Inputs (sources) ---------------------------------------------------
-
-
+#: Maximum length of a string value a device may send.
+MAX_VALUE_LENGTH: Final = 32
+#: Bass and treble of the Rotel tone block, in dB. The device takes whole
+#: steps only, and ``000`` is the neutral position.
+TONE_MIN_DB: Final = -10
+TONE_MAX_DB: Final = 10
+TONE_STEP_DB: Final = 1
+#: Balance: ``L01``..``L15`` and ``R01``..``R15``, ``000`` is centred.
+BALANCE_MIN: Final = -15
+BALANCE_MAX: Final = 15
+BALANCE_STEP: Final = 1
+#: Speaker groups that can be switched on their own.
+SPEAKER_GROUPS: Final[tuple[str, ...]] = ("a", "b")
+#: Front display brightness, ``0`` is the brightest and ``6`` the dimmest.
+DIMMER_MIN: Final = 0
+DIMMER_MAX: Final = 6
+#: Speaker state tokens of a ``speaker=`` reply.
+SPEAKER_STATES: Final[tuple[str, ...]] = ("off", "a", "b", "a_b")
+#: Options of the display dimmer select, as strings so they can be translated.
+DIMMER_OPTIONS: Final[tuple[str, ...]] = tuple(
+    str(level) for level in range(DIMMER_MIN, DIMMER_MAX + 1)
+)
 @dataclass(frozen=True, slots=True)
 class RotelInput:
     """A single input (source) of an amplifier.
@@ -207,16 +191,7 @@ ROTEL_INPUTS: Final[tuple[RotelInput, ...]] = (
     SOURCE_USB,
     SOURCE_PCUSB,
     SOURCE_BLUETOOTH,
-)
-
-#: ``{value: label}`` of the catalogue, used by the config and options flows.
-INPUT_LABELS: Final[dict[str, str]] = {
-    item.value: item.name for item in ROTEL_INPUTS
-}
-
-# --- Volume -------------------------------------------------------------
-#: The front panel volume scale of the units that report a raw volume (the
-#: A12/A14/RA-1572 family): 0..96 "conditional units", spelled ``vol_<NN>!`` on
+)# --- Volume scale ------------------------------------------------------
 #: the wire. This is the only volume scale the protocol speaks for them, and it
 #: is what Home Assistant is shown, so it is the one thing the range of a
 #: profile has to be exactly as long as.
@@ -230,25 +205,36 @@ VOLUME_STEP_DB: Final = 0.5
 #: Decibel of the topmost position of the front panel scale, i.e. the default
 #: upper bound of a profile that reports a raw volume.
 VOLUME_MAX_DB: Final = VOLUME_MIN_DB + VOLUME_UNITS * VOLUME_STEP_DB
-
-# --- Tone controls ------------------------------------------------------
-#: Bass and treble of the Rotel tone block, in dB. The device takes whole
-#: steps only, and ``000`` is the neutral position.
-TONE_MIN_DB: Final = -10
-TONE_MAX_DB: Final = 10
-TONE_STEP_DB: Final = 1
-#: Balance: ``L01``..``L15`` and ``R01``..``R15``, ``000`` is centred.
-BALANCE_MIN: Final = -15
-BALANCE_MAX: Final = 15
-BALANCE_STEP: Final = 1
-#: Speaker groups that can be switched on their own.
-SPEAKER_GROUPS: Final[tuple[str, ...]] = ("a", "b")
-#: Front display brightness, ``0`` is the brightest and ``6`` the dimmest.
-DIMMER_MIN: Final = 0
-DIMMER_MAX: Final = 6
-#: Options of the display dimmer select, as strings so they can be translated.
-DIMMER_OPTIONS: Final[tuple[str, ...]] = tuple(
-    str(level) for level in range(DIMMER_MIN, DIMMER_MAX + 1)
-)
-#: Speaker state tokens of a ``speaker=`` reply.
-SPEAKER_STATES: Final[tuple[str, ...]] = ("off", "a", "b", "a_b")
+# Model profile used when the device does not report its model. Add new
+# profiles to ``protocol.ROTEL_MODELS`` as well.
+DEFAULT_MODEL_PROFILE: Final = "ra1572"
+#: Prefix of the entity name if the user did not choose one.
+DEFAULT_NAME: Final = "Rotel"
+#: Unique identifier for the SSID discovery.
+ROTEL_SSID: Final = "Rotel"
+#: When the user presses a physical button, the device may answer after a
+#: short delay. The debounce in the coordinator absorbs those rapid reports
+#: so the event bus is not flooded.
+PUSH_DEBOUNCE_SECONDS: Final = 0.1
+# --- Entities -----------------------------------------------------------
+PLATFORMS: Final[list[str]] = [
+    "media_player",
+    "number",
+    "select",
+    "sensor",
+    "switch",
+]
+# --- Events ------------------------------------------------------------
+#: Event fired when the device reports a change made elsewhere.
+EVENT_COMMAND_RECEIVED: Final = f"{DOMAIN}_command_received"
+# --- Origins ------------------------------------------------------------
+#: Where a change comes from when firing :data:`EVENT_COMMAND_RECEIVED`.
+ORIGIN_PUSH: Final = "push"
+ORIGIN_POLL: Final = "poll"
+ORIGIN_COMMAND: Final = "command"
+# filtered by ROTEL_NAME_MARKERS and verified against the protocol.
+ROTEL_NAME_MARKERS: Final[tuple[str, ...]] = ("rotel",)
+#: ``{value: label}`` of the catalogue, used by the config and options flows.
+INPUT_LABELS: Final[dict[str, str]] = {
+    item.value: item.name for item in ROTEL_INPUTS
+}

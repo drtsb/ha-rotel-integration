@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_PUSH_UPDATES,
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
+    MIN_PUSH_POLL_INTERVAL,
 )
 from .protocol import MODEL_LABELS, get_model, selectable_inputs
 
@@ -52,6 +53,15 @@ class RotelOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Show and handle the options form."""
         if user_input is not None:
+            # Push updates make the poll a backstop, so a fast poll keeps the
+            # amplifier awake and defeats its own Auto Power Down. The value
+            # is silently lifted when the toggle is on, so a partial
+            # submission (for example a test) keeps its interval.
+            if user_input.get(CONF_PUSH_UPDATES):
+                user_input[CONF_POLL_INTERVAL] = max(
+                    user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+                    MIN_PUSH_POLL_INTERVAL,
+                )
             return self.async_create_entry(data=user_input)
 
         current = {
