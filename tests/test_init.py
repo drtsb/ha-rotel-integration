@@ -1259,6 +1259,9 @@ async def test_options_flow_changes_the_poll_interval(
             CONF_POLL_INTERVAL: 30,
             CONF_MODEL_PROFILE: "ra1572",
             CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+            # Push updates are off, so the interval is taken as is: with them
+            # on the coordinator lifts a fast poll to keep the amplifier idle.
+            CONF_PUSH_UPDATES: False,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -1295,6 +1298,57 @@ async def test_options_flow_limits_the_inputs(
     ]
     state = hass.states.get("select.living_room_input")
     assert state.attributes["options"] == ["CD", "Tuner", "Balanced", "USB"]
+
+
+async def test_push_updates_lift_a_fast_poll_interval(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A poll every few seconds keeps the amplifier awake.
+
+    With push updates on the device reports every change itself, so the poll
+    is only a backstop. A fast poll defeats the amplifier's Auto Power Down:
+    the integration lifts the interval instead of showing an error.
+    """
+    entry = await _async_setup(hass, device)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: 2,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+            CONF_PUSH_UPDATES: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.update_interval.total_seconds() == 1800
+
+
+async def test_push_updates_off_keeps_the_requested_interval(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Without push updates the poll is the only source of state."""
+    entry = await _async_setup(hass, device)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: 2,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+            CONF_PUSH_UPDATES: False,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.update_interval.total_seconds() == 2
 
 
 async def test_unload_removes_the_socket(hass: HomeAssistant, device: FakeRotel) -> None:
