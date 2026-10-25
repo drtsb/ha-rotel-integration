@@ -26,6 +26,7 @@ async def async_get_config_entry_diagnostics(
         },
         "connection": {
             "host": coordinator.api.host,
+            "ip": coordinator.api.host,
             "port": coordinator.api.port,
             "connected": coordinator.api.connected,
             "listening": coordinator.api.listening,
