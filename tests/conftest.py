@@ -60,9 +60,7 @@ def protocol_module() -> types.ModuleType:
     name = f"{PACKAGE_NAME}.protocol"
     if name in sys.modules:
         return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(
-        name, INTEGRATION_PATH / "protocol.py"
-    )
+    spec = importlib.util.spec_from_file_location(name, INTEGRATION_PATH / "protocol.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module

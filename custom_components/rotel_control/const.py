@@ -143,12 +143,8 @@ class RotelInput:
 SOURCE_CD: Final = RotelInput("cd", "CD", "mdi:compact-disc", ("analog_cd",))
 SOURCE_TUNER: Final = RotelInput("tuner", "Tuner", "mdi:radio")
 SOURCE_PHONO: Final = RotelInput("phono", "Phono", "mdi:music-note")
-SOURCE_COAX1: Final = RotelInput(
-    "coax1", "Coax 1", "mdi:surround-sound", ("coax 1", "coaxial 1")
-)
-SOURCE_COAX2: Final = RotelInput(
-    "coax2", "Coax 2", "mdi:surround-sound", ("coax 2", "coaxial 2")
-)
+SOURCE_COAX1: Final = RotelInput("coax1", "Coax 1", "mdi:surround-sound", ("coax 1", "coaxial 1"))
+SOURCE_COAX2: Final = RotelInput("coax2", "Coax 2", "mdi:surround-sound", ("coax 2", "coaxial 2"))
 SOURCE_OPTICAL1: Final = RotelInput(
     "opt1", "Optical 1", "mdi:surround-sound", ("optical1", "opt 1", "optical 1")
 )
@@ -159,9 +155,7 @@ SOURCE_OPTICAL2: Final = RotelInput(
 #: and some report it as ``line1``, both resolve to this one entry.
 #: Named in upper case so Google Home and other Matter controllers render it
 #: as an audio label ("AUX") rather than a sentence-cased word.
-SOURCE_AUX: Final = RotelInput(
-    "aux", "AUX", "mdi:audio-input", ("aux1", "line1", "line 1")
-)
+SOURCE_AUX: Final = RotelInput("aux", "AUX", "mdi:audio-input", ("aux1", "line1", "line 1"))
 #: Front USB of the models with a USB input. ``pcusb`` below is the *PC-USB*
 #: input, which is a different physical connector. The trailing "Audio" makes
 #: the voice assistant answer "USB Audio" instead of the bare "USB", which a
@@ -179,9 +173,7 @@ SOURCE_BALANCED: Final = RotelInput(
     "mdi:surround-sound",
     ("bal_xlr1", "balanced", "bal", "balanced 1", "xlr"),
 )
-SOURCE_PCUSB: Final = RotelInput(
-    "pcusb", "PC USB", "mdi:usb", ("pc_usb", "pc-usb", "pc usb")
-)
+SOURCE_PCUSB: Final = RotelInput("pcusb", "PC USB", "mdi:usb", ("pc_usb", "pc-usb", "pc usb"))
 
 #: Every input a Rotel with a network port is documented to have.
 ROTEL_INPUTS: Final[tuple[RotelInput, ...]] = (

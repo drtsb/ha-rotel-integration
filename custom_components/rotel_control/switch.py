@@ -33,9 +33,7 @@ async def async_setup_entry(
     if coordinator.model.speaker_groups:
         entities.append(RotelSpeakerSwitch(coordinator, entry, ROTEL_SPEAKERS_A, "a"))
         if "b" in coordinator.model.speaker_groups:
-            entities.append(
-                RotelSpeakerSwitch(coordinator, entry, ROTEL_SPEAKERS_B, "b")
-            )
+            entities.append(RotelSpeakerSwitch(coordinator, entry, ROTEL_SPEAKERS_B, "b"))
     if coordinator.model.tone_bypass:
         entities.append(RotelToneBypassSwitch(coordinator, entry))
     async_add_entities(entities)

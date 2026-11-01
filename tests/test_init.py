@@ -92,9 +92,7 @@ async def _async_setup(
     hass: HomeAssistant, device: FakeRotel, model: str = "ra1572"
 ) -> MockConfigEntry:
     """Add the integration through the config flow and set it up."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
 
@@ -130,9 +128,7 @@ async def test_config_flow_creates_and_sets_up_the_entry(
     assert coordinator.data.device_model == "RA1572"
 
     states = [
-        state
-        for state in hass.states.async_all()
-        if state.entity_id.startswith("media_player.")
+        state for state in hass.states.async_all() if state.entity_id.startswith("media_player.")
     ]
     assert states, "no media_player entity was created"
 
@@ -141,9 +137,7 @@ async def test_default_port_is_9590(hass: HomeAssistant) -> None:
     """The form offers the port every Rotel network unit listens on."""
     assert DEFAULT_PORT == 9590
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert _schema_defaults(result)[CONF_PORT] == 9590
 
 
@@ -245,13 +239,7 @@ async def test_generic_profile_offers_the_documented_inputs(
         assert state.attributes["source"] == "Aux"
         # One balanced input, reported by the hardware as bal_xlr.
         assert (
-            len(
-                [
-                    name
-                    for name in state.attributes["source_list"]
-                    if name.startswith("Balanced")
-                ]
-            )
+            len([name for name in state.attributes["source_list"] if name.startswith("Balanced")])
             == 1
         )
 
@@ -373,18 +361,14 @@ async def test_the_device_scale_is_used_up_exactly_once_per_step(
         )
         # The coordinator refreshes after every command, so the volume command
         # is picked out of the traffic instead of taken as the last line.
-        commands = [
-            line for line in device.received[seen:] if line.startswith("vol_")
-        ]
+        commands = [line for line in device.received[seen:] if line.startswith("vol_")]
         assert len(commands) == 1, (position, commands)
         reached.append(commands[0])
 
     assert reached == [f"vol_{position}!" for position in range(97)]
 
 
-async def test_volume_up_and_down_move_one_position(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_volume_up_and_down_move_one_position(hass: HomeAssistant, device: FakeRotel) -> None:
     """The step buttons use the granularity of the front panel."""
     await _async_setup(hass, device)
     device.received.clear()
@@ -634,12 +618,16 @@ async def test_a_setting_is_not_rolled_back_while_the_device_catches_up(
 
         if entity_id.startswith("number."):
             await hass.services.async_call(
-                "number", "set_value", {"entity_id": entity_id, "value": value},
+                "number",
+                "set_value",
+                {"entity_id": entity_id, "value": value},
                 blocking=True,
             )
         elif entity_id.startswith("select."):
             await hass.services.async_call(
-                "select", "select_option", {"entity_id": entity_id, "option": value},
+                "select",
+                "select_option",
+                {"entity_id": entity_id, "option": value},
                 blocking=True,
             )
         else:
@@ -882,9 +870,7 @@ async def test_an_ignored_tone_command_names_the_bypass(
         if record.levelno == logging.WARNING
         and record.name.startswith("custom_components.rotel_control")
     ]
-    assert any("bypass" in message and "bass" in message for message in warnings), (
-        warnings
-    )
+    assert any("bypass" in message and "bass" in message for message in warnings), warnings
 
 
 async def test_display_dimmer_select(hass: HomeAssistant, device: FakeRotel) -> None:
@@ -957,14 +943,10 @@ async def test_media_player_exposes_the_tone_state(
     assert attributes["display_dimmer"] == 0
 
 
-async def test_cannot_connect_shows_an_error(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_cannot_connect_shows_an_error(hass: HomeAssistant, device: FakeRotel) -> None:
     """A closed port is reported as cannot_connect instead of creating an entry."""
     await device.stop()
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_HOST: "127.0.0.1", CONF_PORT: device.port, CONF_MODEL_PROFILE: "ra1572"},
@@ -978,9 +960,7 @@ async def test_failed_attempt_keeps_the_entered_values(
 ) -> None:
     """A failed attempt must not reset the form (issue: fields were cleared)."""
     await device.stop()
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
@@ -1013,9 +993,7 @@ async def test_port_without_rotel_protocol_is_reported_separately(
     """A port that answers nothing at all gets its own error message."""
     clients: list[asyncio.StreamWriter] = []
 
-    async def _silent(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept the connection and never answer."""
         clients.append(writer)
         await reader.read()
@@ -1023,9 +1001,7 @@ async def test_port_without_rotel_protocol_is_reported_separately(
     server = await asyncio.start_server(_silent, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     try:
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -1050,9 +1026,7 @@ async def test_device_that_closes_the_connection_is_reported(
     """An amplifier that hangs up right away gets its own error."""
     clients: list[asyncio.StreamWriter] = []
 
-    async def _reset(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _reset(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept the connection and close it immediately."""
         clients.append(writer)
         writer.close()
@@ -1060,9 +1034,7 @@ async def test_device_that_closes_the_connection_is_reported(
     server = await asyncio.start_server(_reset, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     try:
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -1084,9 +1056,7 @@ async def test_device_that_closes_the_connection_is_reported(
 async def test_duplicate_host_is_aborted(hass: HomeAssistant, device: FakeRotel) -> None:
     """A second entry for the same host is refused."""
     await _async_setup(hass, device)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_HOST: "127.0.0.1", CONF_PORT: device.port, CONF_MODEL_PROFILE: "ra1572"},
@@ -1098,9 +1068,7 @@ async def test_duplicate_host_is_aborted(hass: HomeAssistant, device: FakeRotel)
 async def test_model_is_detected_from_the_device(hass: HomeAssistant, device: FakeRotel) -> None:
     """The profile reported by the device wins over the selected one."""
     device.model = "RCX1500"
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_HOST: "127.0.0.1", CONF_PORT: device.port, CONF_MODEL_PROFILE: "generic"},
@@ -1200,9 +1168,7 @@ async def test_ssdp_discovery_aborts_when_nothing_answers(
 
 async def test_reauth_updates_a_broken_entry(hass: HomeAssistant, device: FakeRotel) -> None:
     """Reauthentication re-validates and restores the entry."""
-    entry = MockConfigEntry(
-        domain=DOMAIN, data=_entry_data(device), unique_id="127.0.0.1"
-    )
+    entry = MockConfigEntry(domain=DOMAIN, data=_entry_data(device), unique_id="127.0.0.1")
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -1271,9 +1237,7 @@ async def test_options_flow_changes_the_poll_interval(
     assert coordinator.update_interval.total_seconds() == 30
 
 
-async def test_options_flow_limits_the_inputs(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_options_flow_limits_the_inputs(hass: HomeAssistant, device: FakeRotel) -> None:
     """A unit with fewer inputs than its profile only shows what it has."""
     entry = await _async_setup(hass, device)
 
@@ -1392,10 +1356,7 @@ async def test_manifest_declares_discovery_correctly() -> None:
     """
     manifest = json.loads(
         (
-            Path(__file__).parent.parent
-            / "custom_components"
-            / "rotel_control"
-            / "manifest.json"
+            Path(__file__).parent.parent / "custom_components" / "rotel_control" / "manifest.json"
         ).read_text()
     )
 
@@ -1418,6 +1379,7 @@ async def test_manifest_declares_discovery_correctly() -> None:
     assert manifest["zeroconf"]
     for service_type in manifest["zeroconf"]:
         assert service_type.endswith("._tcp.local.")
+
 
 async def test_state_is_readable_before_the_first_poll(
     hass: HomeAssistant, device: FakeRotel
@@ -1453,9 +1415,7 @@ async def test_state_is_readable_before_the_first_poll(
     assert attributes["tone_bypass"] is None
     assert attributes["display_dimmer"] is None
 
-    select_entity = hass.data["entity_components"]["select"].get_entity(
-        "select.living_room_input"
-    )
+    select_entity = hass.data["entity_components"]["select"].get_entity("select.living_room_input")
     assert select_entity.current_option is None
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
@@ -1463,9 +1423,7 @@ async def test_state_is_readable_before_the_first_poll(
     assert diagnostics["state"]["unsupported_queries"] == []
 
 
-async def test_commands_work_without_previous_state(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_commands_work_without_previous_state(hass: HomeAssistant, device: FakeRotel) -> None:
     """A command applied to an unknown state does not raise."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -1532,10 +1490,7 @@ async def test_manifest_does_not_match_every_http_device() -> None:
     """A generic zeroconf type would start a flow for every device on the LAN."""
     manifest = json.loads(
         (
-            Path(__file__).parent.parent
-            / "custom_components"
-            / "rotel_control"
-            / "manifest.json"
+            Path(__file__).parent.parent / "custom_components" / "rotel_control" / "manifest.json"
         ).read_text()
     )
 
@@ -1546,9 +1501,7 @@ async def test_manifest_does_not_match_every_http_device() -> None:
 
 def test_readme_documents_every_profile() -> None:
     """The README table must not drift away from the profiles."""
-    readme = (
-        Path(__file__).parent.parent / "README.md"
-    ).read_text()
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
     # Only the profile table: other tables may well start with a backticked
     # lowercase word of their own.
     table = readme.split("| Profile | Model |", 1)[1].split("\n\n", 1)[0]
@@ -1558,9 +1511,7 @@ def test_readme_documents_every_profile() -> None:
     for key, model in ROTEL_MODELS.items():
         if key == "rbx1500":
             assert "Balanced 1–4" in readme
-            assert len(
-                [item for item in model.inputs if item.name.startswith("Balanced")]
-            ) == 4
+            assert len([item for item in model.inputs if item.name.startswith("Balanced")]) == 4
 
 
 # --- reports of the device ----------------------------------------------
@@ -1603,8 +1554,7 @@ async def test_report_of_the_device_updates_the_entities(
     await device.report(volume="20", source="phono")
 
     await _async_wait_until(
-        lambda: coordinator.data.source is not None
-        and coordinator.data.source.value == "phono",
+        lambda: coordinator.data.source is not None and coordinator.data.source.value == "phono",
         "the report of the device",
     )
     state = hass.states.get("media_player.living_room_amplifier")
@@ -1627,9 +1577,7 @@ async def test_report_of_the_device_updates_the_entities(
     }
 
 
-async def test_report_of_a_field_nobody_asked_for(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_report_of_a_field_nobody_asked_for(hass: HomeAssistant, device: FakeRotel) -> None:
     """A report only replaces the field it carries."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -1637,9 +1585,7 @@ async def test_report_of_a_field_nobody_asked_for(
 
     await device.report(speaker="a_b")
 
-    await _async_wait_until(
-        lambda: bool(coordinator.data.speaker_b), "the speaker report"
-    )
+    await _async_wait_until(lambda: bool(coordinator.data.speaker_b), "the speaker report")
     assert coordinator.data.speaker_a is True
     assert coordinator.data.speaker_b is True
     # Everything else survived the report.
@@ -1660,17 +1606,13 @@ async def test_report_of_a_repeated_value_is_not_announced(
     hass.bus.async_listen(EVENT_COMMAND_RECEIVED, _capture(events))
 
     await device.report(volume="30")
-    await _async_wait_until(
-        lambda: coordinator.push_reports == 1, "the repeated report"
-    )
+    await _async_wait_until(lambda: coordinator.push_reports == 1, "the repeated report")
     await hass.async_block_till_done()
 
     assert not events
 
 
-async def test_change_seen_by_a_poll_is_announced(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_change_seen_by_a_poll_is_announced(hass: HomeAssistant, device: FakeRotel) -> None:
     """A unit that does not push is followed by the poll, and it announces."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -1742,9 +1684,7 @@ async def test_an_event_reports_a_state_the_entities_already_show(
     assert seen[0][1] == "Optical Coax 1"
 
 
-async def test_reports_can_be_turned_off(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_reports_can_be_turned_off(hass: HomeAssistant, device: FakeRotel) -> None:
     """The option stops the listener, and polling takes over its job."""
     entry = await _async_setup(hass, device)
 
@@ -1776,9 +1716,7 @@ async def test_reports_can_be_turned_off(
     assert [event.data["origin"] for event in events] == [ORIGIN_POLL]
 
 
-async def test_unload_stops_the_report_listener(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_unload_stops_the_report_listener(hass: HomeAssistant, device: FakeRotel) -> None:
     """Nothing keeps reading the socket of an unloaded entry."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -1791,17 +1729,13 @@ async def test_unload_stops_the_report_listener(
     assert not coordinator.api.listening
 
 
-async def test_diagnostics_describe_the_reports(
-    hass: HomeAssistant, device: FakeRotel
-) -> None:
+async def test_diagnostics_describe_the_reports(hass: HomeAssistant, device: FakeRotel) -> None:
     """A bug report shows whether the device ever reported anything."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
     await device.report(volume="44")
-    await _async_wait_until(
-        lambda: coordinator.push_reports == 1, "the report of the device"
-    )
+    await _async_wait_until(lambda: coordinator.push_reports == 1, "the report of the device")
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
     assert diagnostics["reports"] == {

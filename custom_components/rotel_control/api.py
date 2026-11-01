@@ -193,9 +193,7 @@ class RotelStatus:
         return self.power is not None
 
     @classmethod
-    def from_fields(
-        cls, decoded: Mapping[str, Any], unsupported: frozenset[str]
-    ) -> RotelStatus:
+    def from_fields(cls, decoded: Mapping[str, Any], unsupported: frozenset[str]) -> RotelStatus:
         """Build a snapshot from the attributes :meth:`RotelApi.decode_fields`.
 
         Only the fields that were present end up in the snapshot, so a reply
@@ -235,9 +233,7 @@ class _Exchange:
     the device managed to say instead of failing.
     """
 
-    def __init__(
-        self, required: set[str], timeout: float, *, strict: bool = True
-    ) -> None:
+    def __init__(self, required: set[str], timeout: float, *, strict: bool = True) -> None:
         """Start waiting for ``required`` fields, giving up after ``timeout``."""
         loop = asyncio.get_running_loop()
         self.required = required
@@ -291,9 +287,7 @@ class _Exchange:
         if self.satisfied:
             # Collect the rest of the burst, but not forever: DRAIN_MAX_TIMEOUT
             # stops a device that keeps talking from stalling a poll.
-            until = min(
-                self._settled_at + DRAIN_MAX_TIMEOUT, loop.time() + DRAIN_TIMEOUT
-            )
+            until = min(self._settled_at + DRAIN_MAX_TIMEOUT, loop.time() + DRAIN_TIMEOUT)
         else:
             until = self._deadline
         self._timer = loop.call_at(until, self._on_timeout)
@@ -308,9 +302,7 @@ class _Exchange:
             return
         if missing := sorted(self.required - self.received.keys()):
             if self.strict:
-                self.fail(
-                    RotelApiProtocolError(f"Timeout waiting for {', '.join(missing)}")
-                )
+                self.fail(RotelApiProtocolError(f"Timeout waiting for {', '.join(missing)}"))
                 return
             LOGGER.debug(
                 "Rotel did not answer %s in time, keeping what it did say",
@@ -357,9 +349,7 @@ class RotelApi:
         #: at most one of them; the lock guarantees that.
         self._waiters: collections.deque[_Exchange] = collections.deque()
         #: Batches the device reported on its own, for ``async_next_push``.
-        self._pushes: asyncio.Queue[dict[str, str] | None] = asyncio.Queue(
-            maxsize=PUSH_QUEUE_SIZE
-        )
+        self._pushes: asyncio.Queue[dict[str, str] | None] = asyncio.Queue(maxsize=PUSH_QUEUE_SIZE)
         #: Batches dropped because the listener did not keep up.
         self.dropped_pushes = 0
         #: Fields the device is expected to report back, as
@@ -503,9 +493,7 @@ class RotelApi:
         try:
             while True:
                 try:
-                    data = await asyncio.wait_for(
-                        reader.read(READ_CHUNK), timeout=IDLE_TIMEOUT
-                    )
+                    data = await asyncio.wait_for(reader.read(READ_CHUNK), timeout=IDLE_TIMEOUT)
                 except TimeoutError:
                     LOGGER.debug(
                         "Rotel: idle timeout on %s after %.0fs, closing the "
@@ -573,11 +561,7 @@ class RotelApi:
     def _async_push(self, values: Mapping[str, str]) -> None:
         """Queue what the device reported without being asked."""
         now = asyncio.get_running_loop().time()
-        fresh = {
-            key: value
-            for key, value in values.items()
-            if not self._is_echo(key, value, now)
-        }
+        fresh = {key: value for key, value in values.items() if not self._is_echo(key, value, now)}
         if not fresh:
             return
         LOGGER.debug("Rotel <<< reported %s", fresh)
@@ -693,17 +677,13 @@ class RotelApi:
         """Exchange under the lock, reconnecting and retrying once on error."""
         async with self._lock:
             try:
-                return await self._async_exchange_locked(
-                    lines, required=required, echo=echo
-                )
+                return await self._async_exchange_locked(lines, required=required, echo=echo)
             except (RotelApiConnectionError, RotelApiProtocolError):
                 # The socket may have been closed by the peer (Rotel units
                 # drop idle connections); reconnect and try once more.
                 LOGGER.debug("Rotel: retrying %r after connection error", lines)
                 await self._async_close_locked()
-                return await self._async_exchange_locked(
-                    lines, required=required, echo=echo
-                )
+                return await self._async_exchange_locked(lines, required=required, echo=echo)
 
     async def _async_command(
         self,
@@ -759,9 +739,7 @@ class RotelApi:
             return None
         return received.get(name)
 
-    def decode_fields(
-        self, fields: Mapping[str, str], *, strict: bool = False
-    ) -> dict[str, Any]:
+    def decode_fields(self, fields: Mapping[str, str], *, strict: bool = False) -> dict[str, Any]:
         """Decode reported fields into the attributes of the state.
 
         The keys of the result are the attributes the entities read, so a
@@ -939,9 +917,7 @@ class RotelApi:
     async def async_set_source(self, source: str) -> RotelInput:
         """Select an input by label or protocol value."""
         resolved = self._require_source(source, self._model)
-        await self._async_command(
-            source_command(resolved.value), echo={SOURCE: resolved.value}
-        )
+        await self._async_command(source_command(resolved.value), echo={SOURCE: resolved.value})
         self._values[SOURCE] = resolved.value
         return resolved
 
@@ -1007,9 +983,7 @@ class RotelApi:
             tone_bypass_command(key, bypass), echo={key: state}, confirm=key
         )
         self._values[key] = state
-        return self._applied(
-            key, answered, bypass, partial(tone_bypass_is_bypassed, key)
-        )
+        return self._applied(key, answered, bypass, partial(tone_bypass_is_bypassed, key))
 
     async def async_set_speaker(
         self, group: str, enabled: bool
@@ -1024,9 +998,7 @@ class RotelApi:
         """
         token = group.strip().casefold()
         if token not in self._model.speaker_groups:
-            raise RotelApiProtocolError(
-                f"{self._model.name} has no speaker group {group!r}"
-            )
+            raise RotelApiProtocolError(f"{self._model.name} has no speaker group {group!r}")
         command = {
             ("a", True): RotelCommand.SPEAKER_A_ON,
             ("a", False): RotelCommand.SPEAKER_A_OFF,
@@ -1137,9 +1109,7 @@ class RotelApi:
         except (ProtocolError, TypeError, ValueError) as err:
             LOGGER.debug("Unexpected %s reply %r: %s", name, payload, err)
             if strict and name in CORE_FIELDS:
-                raise RotelApiProtocolError(
-                    f"Unexpected {name} reply: {payload!r}"
-                ) from err
+                raise RotelApiProtocolError(f"Unexpected {name} reply: {payload!r}") from err
             return None
 
     def _require_source(
@@ -1150,9 +1120,7 @@ class RotelApi:
         if found := match_input(inputs, source):
             return found
         known = ", ".join(item.name for item in inputs)
-        raise RotelApiProtocolError(
-            f"Unknown source {source!r}. Known sources: {known}"
-        )
+        raise RotelApiProtocolError(f"Unknown source {source!r}. Known sources: {known}")
 
 
 __all__ = (

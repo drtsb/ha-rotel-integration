@@ -118,9 +118,7 @@ class RotelData:
 STATE_ATTRIBUTES: frozenset[str] = frozenset(item.name for item in fields(RotelData))
 
 
-def changed_fields(
-    previous: RotelData, current: RotelData
-) -> dict[str, tuple[Any, Any]]:
+def changed_fields(previous: RotelData, current: RotelData) -> dict[str, tuple[Any, Any]]:
     """Return the attributes that moved, as ``{attribute: (before, after)}``.
 
     A value that is unknown on either side is not a change: the very first
@@ -239,9 +237,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             )
 
         if status.unsupported:
-            LOGGER.debug(
-                "%s does not answer: %s", self.model.name, ", ".join(status.unsupported)
-            )
+            LOGGER.debug("%s does not answer: %s", self.model.name, ", ".join(status.unsupported))
         return RotelData.from_status(status)
 
     # --- unsolicited reports ---------------------------------------------
@@ -379,9 +375,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
     def _device_registry_id(self) -> str | None:
         """Id of the amplifier in the device registry, if it is registered."""
         if self._device_id is None:
-            device = dr.async_get(self.hass).async_get_device(
-                identifiers={(DOMAIN, self.api.host)}
-            )
+            device = dr.async_get(self.hass).async_get_device(identifiers={(DOMAIN, self.api.host)})
             if device is not None:
                 self._device_id = device.id
         return self._device_id
@@ -445,9 +439,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         """Switch the amplifier on/off and refresh."""
         await self.api.async_set_power(power)
         known = self.known_state
-        self._async_apply_command(
-            known.apply(power=power, mute=False if power else known.mute)
-        )
+        self._async_apply_command(known.apply(power=power, mute=False if power else known.mute))
         await self.async_request_refresh()
 
     async def async_set_volume(self, volume_db: float) -> None:
@@ -456,9 +448,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         # The raw position of the volume scale is only known here, and the
         # attribute should not wait for the next poll to catch up with it.
         self._async_apply_command(
-            self.known_state.apply(
-                volume_db=applied, volume_raw=self.api.values.get(VOLUME)
-            )
+            self.known_state.apply(volume_db=applied, volume_raw=self.api.values.get(VOLUME))
         )
         await self.async_request_refresh()
 
@@ -484,9 +474,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         """Set bass or treble in dB."""
         applied = await self.api.async_set_tone(command, value)
         attribute = "bass_db" if command is RotelCommand.BASS else "treble_db"
-        self._async_apply_setting(
-            self.known_state.apply(**{attribute: applied.value}), applied
-        )
+        self._async_apply_setting(self.known_state.apply(**{attribute: applied.value}), applied)
         self._async_warn_bypassed_tone(attribute, applied)
 
     def _async_warn_bypassed_tone(self, attribute: str, applied: Applied[Any]) -> None:
@@ -512,9 +500,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
     async def async_set_balance(self, balance: float) -> None:
         """Set the channel balance."""
         applied = await self.api.async_set_balance(balance)
-        self._async_apply_setting(
-            self.known_state.apply(balance=applied.value), applied
-        )
+        self._async_apply_setting(self.known_state.apply(balance=applied.value), applied)
         if not applied.confirmed:
             LOGGER.warning(
                 "%s ignored the balance command, which happens on a unit whose "
@@ -525,9 +511,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
     async def async_set_tone_bypass(self, bypass: bool) -> None:
         """Bypass or re-enable the tone block."""
         applied = await self.api.async_set_tone_bypass(bypass)
-        self._async_apply_setting(
-            self.known_state.apply(tone_bypass=applied.value), applied
-        )
+        self._async_apply_setting(self.known_state.apply(tone_bypass=applied.value), applied)
 
     async def async_set_speaker(self, group: str, enabled: bool) -> None:
         """Switch a speaker group."""

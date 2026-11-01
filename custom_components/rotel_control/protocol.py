@@ -455,9 +455,7 @@ ROTEL_MODELS: Mapping[str, RotelModel] = {
 }
 
 #: ``{profile_key: "Rotel RA-1572"}`` for the model selector of the flows.
-MODEL_LABELS: Mapping[str, str] = {
-    key: model.name for key, model in ROTEL_MODELS.items()
-}
+MODEL_LABELS: Mapping[str, str] = {key: model.name for key, model in ROTEL_MODELS.items()}
 
 
 def get_model(key: str | None) -> RotelModel:
@@ -467,9 +465,7 @@ def get_model(key: str | None) -> RotelModel:
     return ROTEL_MODELS["generic"]
 
 
-def get_model_inputs(
-    model: RotelModel, values: Sequence[str]
-) -> tuple[RotelInput, ...]:
+def get_model_inputs(model: RotelModel, values: Sequence[str]) -> tuple[RotelInput, ...]:
     """Return the inputs of ``model`` limited to ``values``.
 
     Used by the options flow: a unit whose front panel differs from its model
@@ -490,9 +486,7 @@ def get_model_inputs(
     if not resolved:
         return model.inputs
     selected = tuple(item for item in model.inputs if item.value in resolved)
-    extra = tuple(
-        item for item in ROTEL_INPUTS if item.value in resolved and item not in selected
-    )
+    extra = tuple(item for item in ROTEL_INPUTS if item.value in resolved and item not in selected)
     return selected + extra
 
 
@@ -588,9 +582,7 @@ def parse_on_off(value: str) -> bool:
     raise ProtocolError(f"Unexpected boolean value: {value!r}")
 
 
-def parse_source(
-    payload: str, model: RotelModel, *, record: bool = False
-) -> RotelInput:
+def parse_source(payload: str, model: RotelModel, *, record: bool = False) -> RotelInput:
     """Resolve a reported input value to a :class:`RotelInput`."""
     inputs = model.record_inputs if record else model.inputs
     if (found := match_input(inputs, payload)) is not None:

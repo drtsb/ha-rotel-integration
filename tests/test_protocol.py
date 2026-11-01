@@ -252,9 +252,7 @@ def test_volume_out_of_range_detection(model: RotelModel) -> None:
     assert not protocol.volume_is_out_of_range("max", model)
 
 
-@pytest.mark.parametrize(
-    ("payload", "expected"), [("42", 42.0), ("-30.5", -30.5), ("max", None)]
-)
+@pytest.mark.parametrize(("payload", "expected"), [("42", 42.0), ("-30.5", -30.5), ("max", None)])
 def test_parse_volume_number(payload: str, expected: float | None) -> None:
     """Only a real position is a number, sentinels are not."""
     assert protocol.parse_volume_number(payload) == expected
@@ -262,12 +260,8 @@ def test_parse_volume_number(payload: str, expected: float | None) -> None:
 
 def test_snap_volume_avoids_float_dust(model: RotelModel) -> None:
     """Snapped volumes are rounded to two decimals."""
-    assert protocol.snap_volume(model.volume_min_db - 0.0000001, model) == (
-        model.volume_min_db
-    )
-    assert protocol.snap_volume(model.volume_max_db - 0.3, model) == (
-        model.volume_max_db - 0.5
-    )
+    assert protocol.snap_volume(model.volume_min_db - 0.0000001, model) == (model.volume_min_db)
+    assert protocol.snap_volume(model.volume_max_db - 0.3, model) == (model.volume_max_db - 0.5)
 
 
 # --- inputs -------------------------------------------------------------
@@ -311,15 +305,11 @@ def test_integrated_amplifiers_have_exactly_one_balanced_input() -> None:
     """The BAL input of a Rotel amplifier is a single XLR, never a pair."""
     for key in ("ra1572", "ra1572mkii", "ra1200", "rca10", "generic"):
         values = [
-            item.value
-            for item in protocol.get_model(key).inputs
-            if item.value.startswith("bal")
+            item.value for item in protocol.get_model(key).inputs if item.value.startswith("bal")
         ]
         assert values == ["bal_xlr"], key
         # And the value a firmware reports for the hardware resolves to it.
-        assert protocol.parse_source("bal_xlr", protocol.get_model(key)).value == (
-            "bal_xlr"
-        )
+        assert protocol.parse_source("bal_xlr", protocol.get_model(key)).value == ("bal_xlr")
 
 
 def test_generic_profile_is_the_documented_input_set() -> None:
@@ -403,12 +393,7 @@ def test_record_inputs_only_for_processors() -> None:
     """Only RCX models expose a record source."""
     assert not protocol.get_model("ra1572").record_inputs
     assert protocol.get_model("rcx1500").record_inputs
-    assert (
-        protocol.parse_source(
-            "cd", protocol.get_model("rcx1500"), record=True
-        ).name
-        == "CD"
-    )
+    assert protocol.parse_source("cd", protocol.get_model("rcx1500"), record=True).name == "CD"
 
 
 # --- model profiles -----------------------------------------------------
@@ -448,6 +433,7 @@ def test_detected_profile_wins_over_generic() -> None:
     detected = protocol.detect_model("RA1572")
     assert detected is protocol.get_model("ra1572")
     assert detected.inputs == protocol.get_model("ra1572").inputs
+
 
 # --- tone controls ------------------------------------------------------
 
