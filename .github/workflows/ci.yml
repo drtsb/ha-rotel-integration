@@ -43,7 +43,7 @@ jobs:
         run: uvx ruff format --check .
 
       - name: mypy
-        run: uv run --with mypy --with homeassistant mypy custom_components/rotel
+        run: uv run --with mypy --with homeassistant mypy custom_components/rotel_control
 
   version-check:
     name: Manifest version increment
