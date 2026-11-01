@@ -147,7 +147,9 @@ async def test_default_port_is_9590(hass: HomeAssistant) -> None:
     assert _schema_defaults(result)[CONF_PORT] == 9590
 
 
-async def test_all_platforms_are_forwarded(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_all_platforms_are_forwarded(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """Every platform of the entry is set up."""
     entry = await _async_setup(hass, device)
     registry = er.async_get(hass)
@@ -177,7 +179,9 @@ async def test_device_registry_entry(hass: HomeAssistant, device: FakeRotel) -> 
     assert entry.sw_version == "1.24"
 
 
-async def test_media_player_state_and_volume(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_media_player_state_and_volume(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """The media player exposes state and the volume on the 0..96 scale."""
     await _async_setup(hass, device)
     state = hass.states.get("media_player.living_room_amplifier")
@@ -269,7 +273,9 @@ async def test_generic_profile_offers_the_documented_inputs(
     assert hass.states.get("select.living_room_input").state == label
 
 
-async def test_turn_off_and_on_go_to_the_device(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_turn_off_and_on_go_to_the_device(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """Power commands reach the amplifier and the state follows."""
     await _async_setup(hass, device)
 
@@ -373,9 +379,7 @@ async def test_the_device_scale_is_used_up_exactly_once_per_step(
         )
         # The coordinator refreshes after every command, so the volume command
         # is picked out of the traffic instead of taken as the last line.
-        commands = [
-            line for line in device.received[seen:] if line.startswith("vol_")
-        ]
+        commands = [line for line in device.received[seen:] if line.startswith("vol_")]
         assert len(commands) == 1, (position, commands)
         reached.append(commands[0])
 
@@ -634,12 +638,16 @@ async def test_a_setting_is_not_rolled_back_while_the_device_catches_up(
 
         if entity_id.startswith("number."):
             await hass.services.async_call(
-                "number", "set_value", {"entity_id": entity_id, "value": value},
+                "number",
+                "set_value",
+                {"entity_id": entity_id, "value": value},
                 blocking=True,
             )
         elif entity_id.startswith("select."):
             await hass.services.async_call(
-                "select", "select_option", {"entity_id": entity_id, "option": value},
+                "select",
+                "select_option",
+                {"entity_id": entity_id, "option": value},
                 blocking=True,
             )
         else:
@@ -1081,7 +1089,9 @@ async def test_device_that_closes_the_connection_is_reported(
     assert result["errors"] == {"base": "device_closed"}
 
 
-async def test_duplicate_host_is_aborted(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_duplicate_host_is_aborted(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """A second entry for the same host is refused."""
     await _async_setup(hass, device)
     result = await hass.config_entries.flow.async_init(
@@ -1095,7 +1105,9 @@ async def test_duplicate_host_is_aborted(hass: HomeAssistant, device: FakeRotel)
     assert result["reason"] == "already_configured"
 
 
-async def test_model_is_detected_from_the_device(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_model_is_detected_from_the_device(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """The profile reported by the device wins over the selected one."""
     device.model = "RCX1500"
     result = await hass.config_entries.flow.async_init(
@@ -1198,7 +1210,9 @@ async def test_ssdp_discovery_aborts_when_nothing_answers(
     assert result["reason"] == "not_rotel"
 
 
-async def test_reauth_updates_a_broken_entry(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_reauth_updates_a_broken_entry(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """Reauthentication re-validates and restores the entry."""
     entry = MockConfigEntry(
         domain=DOMAIN, data=_entry_data(device), unique_id="127.0.0.1"
@@ -1351,7 +1365,9 @@ async def test_push_updates_off_keeps_the_requested_interval(
     assert coordinator.update_interval.total_seconds() == 2
 
 
-async def test_unload_removes_the_socket(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_unload_removes_the_socket(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """Unloading the entry closes the TCP connection."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -1364,7 +1380,9 @@ async def test_unload_removes_the_socket(hass: HomeAssistant, device: FakeRotel)
     assert not coordinator.api.connected
     assert DOMAIN not in hass.data or entry.entry_id not in hass.data[DOMAIN]
     # Home Assistant keeps a placeholder state for removed entities.
-    assert hass.states.get("media_player.living_room_amplifier").state == STATE_UNAVAILABLE
+    assert (
+        hass.states.get("media_player.living_room_amplifier").state == STATE_UNAVAILABLE
+    )
 
 
 async def test_entities_go_unavailable_when_the_device_disappears(
@@ -1418,6 +1436,7 @@ async def test_manifest_declares_discovery_correctly() -> None:
     assert manifest["zeroconf"]
     for service_type in manifest["zeroconf"]:
         assert service_type.endswith("._tcp.local.")
+
 
 async def test_state_is_readable_before_the_first_poll(
     hass: HomeAssistant, device: FakeRotel
@@ -1546,9 +1565,7 @@ async def test_manifest_does_not_match_every_http_device() -> None:
 
 def test_readme_documents_every_profile() -> None:
     """The README table must not drift away from the profiles."""
-    readme = (
-        Path(__file__).parent.parent / "README.md"
-    ).read_text()
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
     # Only the profile table: other tables may well start with a backticked
     # lowercase word of their own.
     table = readme.split("| Profile | Model |", 1)[1].split("\n\n", 1)[0]
@@ -1558,9 +1575,10 @@ def test_readme_documents_every_profile() -> None:
     for key, model in ROTEL_MODELS.items():
         if key == "rbx1500":
             assert "Balanced 1–4" in readme
-            assert len(
-                [item for item in model.inputs if item.name.startswith("Balanced")]
-            ) == 4
+            assert (
+                len([item for item in model.inputs if item.name.startswith("Balanced")])
+                == 4
+            )
 
 
 # --- reports of the device ----------------------------------------------
@@ -1603,8 +1621,10 @@ async def test_report_of_the_device_updates_the_entities(
     await device.report(volume="20", source="phono")
 
     await _async_wait_until(
-        lambda: coordinator.data.source is not None
-        and coordinator.data.source.value == "phono",
+        lambda: (
+            coordinator.data.source is not None
+            and coordinator.data.source.value == "phono"
+        ),
         "the report of the device",
     )
     state = hass.states.get("media_player.living_room_amplifier")
@@ -1817,7 +1837,9 @@ async def test_diagnostics_describe_the_reports(
 
 # --- brand assets -------------------------------------------------------
 
-BRAND_DIR = Path(__file__).parent.parent / "custom_components" / "rotel_control" / "brand"
+BRAND_DIR = (
+    Path(__file__).parent.parent / "custom_components" / "rotel_control" / "brand"
+)
 
 #: Home Assistant serves the images of a custom integration from
 #: ``custom_components/<domain>/brand/`` and HACS expects the same folder, so

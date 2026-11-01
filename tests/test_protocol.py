@@ -404,9 +404,7 @@ def test_record_inputs_only_for_processors() -> None:
     assert not protocol.get_model("ra1572").record_inputs
     assert protocol.get_model("rcx1500").record_inputs
     assert (
-        protocol.parse_source(
-            "cd", protocol.get_model("rcx1500"), record=True
-        ).name
+        protocol.parse_source("cd", protocol.get_model("rcx1500"), record=True).name
         == "CD"
     )
 
@@ -448,6 +446,7 @@ def test_detected_profile_wins_over_generic() -> None:
     detected = protocol.detect_model("RA1572")
     assert detected is protocol.get_model("ra1572")
     assert detected.inputs == protocol.get_model("ra1572").inputs
+
 
 # --- tone controls ------------------------------------------------------
 

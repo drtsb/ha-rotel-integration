@@ -42,7 +42,7 @@
             "st": "upnp:rootdevice"
         }
     ],
-    "version": "0.5.3",
+    "version": "0.5.4",
     "zeroconf": [
         "_rotel._tcp.local.",
         "_rotel-control._tcp.local.",
