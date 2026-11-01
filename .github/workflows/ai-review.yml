@@ -1,0 +1,64 @@
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: AI review
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY || secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          AGENTS=$(cat AGENTS.md 2>/dev/null || echo "")
+          DIFF=$(gh pr diff "$PR_NUMBER" --repo "$REPO")
+
+          PROMPT="You are a senior Home Assistant core reviewer. Review the following pull request diff against the project AGENTS.md guidelines.
+
+Focus areas:
+- Compliance with Home Assistant Core patterns.
+- No synchronous I/O or time.sleep in async code.
+- No aggressive polling (protect Standby mode).
+- Correct volume scale handling 0-96.
+
+AGENTS.md:
+$AGENTS
+
+PR diff:
+$DIFF
+
+Provide a concise review comment with findings and suggestions."
+
+          if [ -n "$OPENAI_API_KEY" ]; then
+            KEY="$OPENAI_API_KEY"
+          else
+            KEY="$LLM_API_KEY"
+          fi
+
+          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+            -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(python3 -c 'import json,sys; print(json.dumps({"model":"gpt-4o-mini","messages":[{"role":"user","content":sys.argv[1]}]}))' "$PROMPT")")
+
+          COMMENT=$(echo "$RESPONSE" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["choices"][0]["message"]["content"])')
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"

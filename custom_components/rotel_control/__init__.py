@@ -1,6 +1,7 @@
 """The Rotel Amplifier integration.
 
-Every entry gets its own :class:`~custom_components.rotel_control.coordinator.RotelCoordinator`
+Every entry gets its own
+:class:`~custom_components.rotel_control.coordinator.RotelCoordinator`
 (owning one TCP connection) and shares it between the entity platforms.
 """
 
