@@ -59,12 +59,12 @@ jobs:
           set -e
           base="${{ github.base_ref }}"
           git fetch origin "$base" --depth=1
-          if git diff --quiet "origin/$base" -- custom_components/rotel/manifest.json; then
+          if git diff --quiet "origin/$base" -- custom_components/rotel_control/manifest.json; then
             echo "Version in manifest.json must be incremented for each PR (see AGENTS.md)"
             exit 1
           fi
-          base_ver=$(git show "origin/$base:custom_components/rotel/manifest.json" | python -c 'import sys,json; print(json.load(sys.stdin)["version"])')
-          head_ver=$(python -c 'import json; print(json.load(open("custom_components/rotel/manifest.json"))["version"])')
+          base_ver=$(git show "origin/$base:custom_components/rotel_control/manifest.json" | python -c 'import sys,json; print(json.load(sys.stdin)["version"])')
+          head_ver=$(python -c 'import json; print(json.load(open("custom_components/rotel_control/manifest.json"))["version"])')
           if [ "$base_ver" = "$head_ver" ]; then
             echo "Version in manifest.json must be incremented for each PR (see AGENTS.md)"
             exit 1
