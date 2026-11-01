@@ -58,9 +58,7 @@ def model_schema(defaults: dict[str, Any]) -> vol.Schema:
     """
     return vol.Schema(
         {
-            vol.Required(
-                CONF_HOST, default=defaults.get(CONF_HOST) or vol.UNDEFINED
-            ): str,
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST) or vol.UNDEFINED): str,
             vol.Required(
                 CONF_PORT,
                 default=int(defaults.get(CONF_PORT, DEFAULT_PORT)),
@@ -69,9 +67,7 @@ def model_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_MODEL_PROFILE,
                 default=defaults.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
             ): vol.In(MODEL_LABELS),
-            vol.Optional(
-                CONF_NAME, default=defaults.get(CONF_NAME) or vol.UNDEFINED
-            ): str,
+            vol.Optional(CONF_NAME, default=defaults.get(CONF_NAME) or vol.UNDEFINED): str,
         }
     )
 
@@ -127,9 +123,7 @@ def _merge_reported_model(
         if detected := detect_model(reported):
             model = detected
         elif model.rbc and model.rbc.casefold() != str(reported).casefold():
-            LOGGER.warning(
-                "Device reports model %s, profile %s is in use", reported, model.key
-            )
+            LOGGER.warning("Device reports model %s, profile %s is in use", reported, model.key)
     info["model_key"] = model.key
     return model, info
 
@@ -167,9 +161,7 @@ async def async_find_rotel_port(
         if isinstance(probe, BaseException):
             continue
         model, info = probe
-        LOGGER.debug(
-            "Rotel at %s answers on port %s (profile %s)", host, port, model.key
-        )
+        LOGGER.debug("Rotel at %s answers on port %s (profile %s)", host, port, model.key)
         return port, model, info
     return None
 
@@ -332,9 +324,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 
     # --- user step -------------------------------------------------------
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for the host, port and model, then verify the connection."""
         errors: dict[str, str] = {}
         # What the form should show: discovery first, then whatever the user
@@ -367,9 +357,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                     },
                 )
 
-        schema = self.add_suggested_values_to_schema(
-            model_schema(defaults), user_input or defaults
-        )
+        schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     # --- reauth / reconfigure -------------------------------------------
@@ -392,12 +380,8 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             if updates is not None:
                 return self.async_update_reload_and_abort(entry, data_updates=updates)
 
-        schema = self.add_suggested_values_to_schema(
-            model_schema(defaults), user_input or defaults
-        )
-        return self.async_show_form(
-            step_id="reauth_confirm", data_schema=schema, errors=errors
-        )
+        schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
+        return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -412,12 +396,8 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             if updates is not None:
                 return self.async_update_reload_and_abort(entry, data_updates=updates)
 
-        schema = self.add_suggested_values_to_schema(
-            model_schema(defaults), user_input or defaults
-        )
-        return self.async_show_form(
-            step_id="reconfigure", data_schema=schema, errors=errors
-        )
+        schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
+        return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
 
     async def _async_validate_updates(
         self, user_input: dict[str, Any]
@@ -429,9 +409,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         """
         host = str(user_input[CONF_HOST]).strip()
         port = int(user_input[CONF_PORT])
-        model, _, errors = await self._async_probe_input(
-            host, port, user_input[CONF_MODEL_PROFILE]
-        )
+        model, _, errors = await self._async_probe_input(host, port, user_input[CONF_MODEL_PROFILE])
         if model is None:
             return None, errors
         return {
@@ -474,9 +452,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     def _schema_defaults(entry: ConfigEntry) -> dict[str, Any]:
         """Build the form defaults from the stored entry."""
         defaults = {
-            CONF_MODEL_PROFILE: entry.data.get(
-                CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE
-            ),
+            CONF_MODEL_PROFILE: entry.data.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
             CONF_HOST: entry.data.get(CONF_HOST),
             CONF_PORT: int(entry.data.get(CONF_PORT, DEFAULT_PORT)),
             CONF_NAME: entry.data.get(CONF_NAME),

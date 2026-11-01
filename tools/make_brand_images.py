@@ -45,9 +45,7 @@ SIZES = {
 }
 
 
-def _draw_mark(
-    draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], colour
-) -> None:
+def _draw_mark(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], colour) -> None:
     """Draw the amplifier mark into ``box``, preserving the aspect ratio."""
     left, top, right, bottom = box
     side = min(right - left, bottom - top)

@@ -236,9 +236,7 @@ class FakeRotel:
             return _field(attribute, self._reported(attribute))
         return _field("source", self._reported("source"))
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Serve one connection until the client goes away."""
         self.connections += 1
         self._writers.append(writer)
@@ -385,9 +383,7 @@ class FakeRotel:
     def _reported_state(self, attribute: str) -> str:
         """Return the value the device is about to have, not the one it has."""
         if attribute == "tone_bypass":
-            return self._tone_state(
-                self._due[attribute][1] if attribute in self._due else None
-            )
+            return self._tone_state(self._due[attribute][1] if attribute in self._due else None)
         return self._reported(attribute)
 
     def _tone_state(self, bypass: bool | None = None) -> str:

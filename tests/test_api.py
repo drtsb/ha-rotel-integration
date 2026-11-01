@@ -53,9 +53,7 @@ async def test_connect_sends_a_query_and_verifies_the_protocol(
     assert not any(command.endswith("!") for command in device.received)
 
 
-async def test_connect_fails_on_a_silent_port(
-    api_module, protocol_module, device
-) -> None:
+async def test_connect_fails_on_a_silent_port(api_module, protocol_module, device) -> None:
     """A port that accepts the socket but never answers is not a Rotel."""
     device.ignore = frozenset({"power"})
     api = make_api(api_module, protocol_module, device, socket_timeout=0.2)
@@ -65,9 +63,7 @@ async def test_connect_fails_on_a_silent_port(
     assert not api.connected
 
 
-async def test_get_status_reports_every_value(
-    api_module, protocol_module, device
-) -> None:
+async def test_get_status_reports_every_value(api_module, protocol_module, device) -> None:
     """A poll fills the complete snapshot."""
     api = make_api(api_module, protocol_module, device)
     status = await api.async_get_status()
@@ -85,9 +81,7 @@ async def test_get_status_reports_every_value(
     assert "record_source?" not in device.received
 
 
-async def test_get_status_asks_for_every_field_once(
-    api_module, protocol_module, device
-) -> None:
+async def test_get_status_asks_for_every_field_once(api_module, protocol_module, device) -> None:
     """A poll asks for the state fields, the device info only once."""
     api = make_api(api_module, protocol_module, device)
     await api.async_get_status()
@@ -103,9 +97,7 @@ async def test_get_status_asks_for_every_field_once(
     )
 
 
-async def test_set_power_and_volume_round_trip(
-    api_module, protocol_module, device
-) -> None:
+async def test_set_power_and_volume_round_trip(api_module, protocol_module, device) -> None:
     """Commands reach the device and the reported state follows."""
     api = make_api(api_module, protocol_module, device)
     await api.async_set_volume(-60.0)
@@ -125,9 +117,7 @@ async def test_reply_split_across_segments(api_module, protocol_module, device) 
     assert status.source is not None
 
 
-async def test_power_interlock_resends_the_volume(
-    api_module, protocol_module, device
-) -> None:
+async def test_power_interlock_resends_the_volume(api_module, protocol_module, device) -> None:
     """Powering on re-sends the volume so the pre-out relays open."""
     api = make_api(api_module, protocol_module, device)
     await api.async_set_volume(-60.0)
@@ -140,9 +130,7 @@ async def test_power_interlock_resends_the_volume(
     assert "vol_0!" in device.received
 
 
-async def test_unsupported_query_degrades_to_none(
-    api_module, protocol_module, device
-) -> None:
+async def test_unsupported_query_degrades_to_none(api_module, protocol_module, device) -> None:
     """An old firmware without model? still yields a snapshot."""
     device.ignore = frozenset({"model"})
     api = make_api(api_module, protocol_module, device, socket_timeout=0.2)
@@ -153,9 +141,7 @@ async def test_unsupported_query_degrades_to_none(
     assert "model" in status.unsupported
 
 
-async def test_unsupported_query_is_asked_only_once(
-    api_module, protocol_module, device
-) -> None:
+async def test_unsupported_query_is_asked_only_once(api_module, protocol_module, device) -> None:
     """A field the firmware ignores is not re-asked on every poll."""
     device.ignore = frozenset({"model"})
     api = make_api(api_module, protocol_module, device, socket_timeout=0.2)
@@ -168,9 +154,7 @@ async def test_unsupported_query_is_asked_only_once(
     assert "model?" not in device.received
 
 
-async def test_record_source_of_a_processor(
-    api_module, protocol_module, device
-) -> None:
+async def test_record_source_of_a_processor(api_module, protocol_module, device) -> None:
     """An RCX is asked for its record source and can set it."""
     api = api_module.RotelApi(
         "127.0.0.1",
@@ -226,9 +210,7 @@ async def test_device_that_closes_the_connection(
 ) -> None:
     """A device that hangs up right away is reported as closed."""
 
-    async def _reset(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _reset(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept the connection and close it immediately."""
         writer.close()
 
@@ -251,9 +233,7 @@ async def test_device_that_closes_the_connection(
         await server.wait_closed()
 
 
-async def test_reconnects_after_the_device_hangs_up(
-    api_module, protocol_module, device
-) -> None:
+async def test_reconnects_after_the_device_hangs_up(api_module, protocol_module, device) -> None:
     """A dropped connection is re-established transparently."""
     api = make_api(api_module, protocol_module, device)
     assert await api.async_query(protocol_module.RotelQuery.POWER) == "on"
@@ -263,9 +243,7 @@ async def test_reconnects_after_the_device_hangs_up(
     assert device.connections >= 2
 
 
-async def test_validate_returns_device_information(
-    api_module, protocol_module, device
-) -> None:
+async def test_validate_returns_device_information(api_module, protocol_module, device) -> None:
     """The config flow helper reports model and firmware."""
     api = make_api(api_module, protocol_module, device)
     info = await api.async_validate()
@@ -311,9 +289,7 @@ async def test_model_and_firmware_are_asked_again_after_a_failed_connect(
     assert not status.unsupported
 
 
-async def test_quoted_values_are_understood(
-    api_module, protocol_module, device
-) -> None:
+async def test_quoted_values_are_understood(api_module, protocol_module, device) -> None:
     """Firmware that wraps values in quotes does not break the poll."""
     device.quote = True
     api = make_api(api_module, protocol_module, device)
@@ -404,9 +380,7 @@ async def test_slow_burst_is_collected_in_one_poll(
 # --- unsolicited reports ------------------------------------------------
 
 
-async def test_reports_of_the_device_arrive_as_pushes(
-    api_module, protocol_module, device
-) -> None:
+async def test_reports_of_the_device_arrive_as_pushes(api_module, protocol_module, device) -> None:
     """A field nobody asked for is handed to the push listener."""
     api = make_api(api_module, protocol_module, device)
     await api.async_get_status()

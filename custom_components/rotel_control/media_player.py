@@ -232,9 +232,7 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
                 return
         model = self.coordinator.model
         position = float(volume_to_payload(current, model))
-        await self.coordinator.async_set_volume(
-            self._volume_at_position(position + direction)
-        )
+        await self.coordinator.async_set_volume(self._volume_at_position(position + direction))
 
     async def async_mute_volume(self, mute: bool, **kwargs: bool) -> None:
         """Mute or unmute the amplifier.

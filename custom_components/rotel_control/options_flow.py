@@ -48,9 +48,7 @@ def inputs_selector() -> SelectSelector:
 class RotelOptionsFlow(OptionsFlow):
     """Allow changing the polling rate, the model and the inputs at runtime."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show and handle the options form."""
         if user_input is not None:
             # Push updates make the poll a backstop, so a fast poll keeps the
@@ -78,27 +76,21 @@ class RotelOptionsFlow(OptionsFlow):
         }
         # The inputs of the profile in use are the suggestion: changing the
         # model offers that model's inputs instead of an empty list.
-        profile = self.config_entry.options.get(
-            CONF_MODEL_PROFILE, current[CONF_MODEL_PROFILE]
-        )
+        profile = self.config_entry.options.get(CONF_MODEL_PROFILE, current[CONF_MODEL_PROFILE])
         selected = self.config_entry.options.get(CONF_INPUTS)
         if selected is None:
             selected = [item.value for item in get_model(profile).inputs]
         schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_POLL_INTERVAL, default=current[CONF_POLL_INTERVAL]
-                ): vol.All(
+                vol.Required(CONF_POLL_INTERVAL, default=current[CONF_POLL_INTERVAL]): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
                 ),
-                vol.Required(
-                    CONF_MODEL_PROFILE, default=current[CONF_MODEL_PROFILE]
-                ): vol.In(MODEL_LABELS),
+                vol.Required(CONF_MODEL_PROFILE, default=current[CONF_MODEL_PROFILE]): vol.In(
+                    MODEL_LABELS
+                ),
                 vol.Required(CONF_INPUTS, default=list(selected)): inputs_selector(),
-                vol.Required(
-                    CONF_PUSH_UPDATES, default=current[CONF_PUSH_UPDATES]
-                ): bool,
+                vol.Required(CONF_PUSH_UPDATES, default=current[CONF_PUSH_UPDATES]): bool,
             }
         )
         return self.async_show_form(
