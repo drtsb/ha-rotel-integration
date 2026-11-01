@@ -261,7 +261,7 @@ def _is_rotel(info: Any) -> bool:
     return any(marker in blob for marker in ROTEL_NAME_MARKERS)
 
 
-class RotelConfigFlow(ConfigFlow, domain=DOMAIN):
+class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[misc]
     """Handle the Rotel config flow."""
 
     VERSION = 1
