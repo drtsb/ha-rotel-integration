@@ -15,7 +15,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from datetime import timedelta
-from typing import Any, TypeAlias
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -142,7 +142,7 @@ def _plain(value: Any) -> Any:
     return value.value if isinstance(value, RotelInput) else value
 
 
-RotelConfigEntry: TypeAlias = ConfigEntry[RotelApi]
+type RotelConfigEntry = ConfigEntry[RotelApi]
 
 
 class RotelCoordinator(DataUpdateCoordinator[RotelData]):
@@ -166,7 +166,9 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             LOGGER,
             config_entry=config_entry,
             name=f"{DOMAIN} ({config_entry.title})",
-            update_interval=timedelta(seconds=self._effective_interval(poll_interval, push_updates)),
+            update_interval=timedelta(
+                seconds=self._effective_interval(poll_interval, push_updates)
+            ),
             always_update=False,
         )
         self.api = api
@@ -223,9 +225,7 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
             raise UpdateFailed(f"Connection to {self.api.host} failed: {err}") from err
         except RotelApiProtocolError as err:
             self.consecutive_failures += 1
-            raise UpdateFailed(
-                f"Unexpected reply from {self.api.host}: {err}"
-            ) from err
+            raise UpdateFailed(f"Unexpected reply from {self.api.host}: {err}") from err
         except RotelApiError as err:  # pragma: no cover - defensive
             self.consecutive_failures += 1
             raise UpdateFailed(f"Error talking to {self.api.host}: {err}") from err
@@ -551,4 +551,3 @@ __all__ = (
     "RotelData",
     "changed_fields",
 )
-

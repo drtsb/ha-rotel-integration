@@ -154,7 +154,10 @@ async def async_find_rotel_port(
     probes = await asyncio.gather(
         *(
             _async_probe(
-                host, port, connect_timeout=PROBE_CONNECT_TIMEOUT, socket_timeout=PROBE_TIMEOUT
+                host,
+                port,
+                connect_timeout=PROBE_CONNECT_TIMEOUT,
+                socket_timeout=PROBE_TIMEOUT,
             )
             for port in ports
         ),
@@ -297,9 +300,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="not_supported")
         return await self._async_step_discovered(discovery_info, host)
 
-    async def _async_step_discovered(
-        self, info: Any, host: str
-    ) -> ConfigFlowResult:
+    async def _async_step_discovered(self, info: Any, host: str) -> ConfigFlowResult:
         """Verify the announced device and pre-fill the user step with it.
 
         The announcement only names the device, never the control port, so the
@@ -345,9 +346,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):
             host: str = str(user_input[CONF_HOST]).strip()
             port = int(user_input[CONF_PORT])
             model_key: str = user_input[CONF_MODEL_PROFILE]
-            model, info, errors = await self._async_probe_input(
-                host, port, model_key
-            )
+            model, info, errors = await self._async_probe_input(host, port, model_key)
             if model is not None:
                 await self.async_set_unique_id(host, raise_on_progress=False)
                 self._abort_if_unique_id_configured(
@@ -371,15 +370,11 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):
         schema = self.add_suggested_values_to_schema(
             model_schema(defaults), user_input or defaults
         )
-        return self.async_show_form(
-            step_id="user", data_schema=schema, errors=errors
-        )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     # --- reauth / reconfigure -------------------------------------------
 
-    async def async_step_reauth(
-        self, entry_data: dict[str, Any]
-    ) -> ConfigFlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Handle the credential-less reconnect of an unreachable device."""
         self._discovered = dict(entry_data)
         return await self.async_step_reauth_confirm()

@@ -101,6 +101,8 @@ SPEAKER_STATES: Final[tuple[str, ...]] = ("off", "a", "b", "a_b")
 DIMMER_OPTIONS: Final[tuple[str, ...]] = tuple(
     str(level) for level in range(DIMMER_MIN, DIMMER_MAX + 1)
 )
+
+
 @dataclass(frozen=True, slots=True)
 class RotelInput:
     """A single input (source) of an amplifier.
@@ -195,7 +197,7 @@ ROTEL_INPUTS: Final[tuple[RotelInput, ...]] = (
     SOURCE_USB,
     SOURCE_PCUSB,
     SOURCE_BLUETOOTH,
-)# --- Volume scale ------------------------------------------------------
+)  # --- Volume scale ------------------------------------------------------
 #: the wire. This is the only volume scale the protocol speaks for them, and it
 #: is what Home Assistant is shown, so it is the one thing the range of a
 #: profile has to be exactly as long as.
@@ -239,6 +241,4 @@ ORIGIN_COMMAND: Final = "command"
 # filtered by ROTEL_NAME_MARKERS and verified against the protocol.
 ROTEL_NAME_MARKERS: Final[tuple[str, ...]] = ("rotel",)
 #: ``{value: label}`` of the catalogue, used by the config and options flows.
-INPUT_LABELS: Final[dict[str, str]] = {
-    item.value: item.name for item in ROTEL_INPUTS
-}
+INPUT_LABELS: Final[dict[str, str]] = {item.value: item.name for item in ROTEL_INPUTS}

@@ -31,9 +31,7 @@ async def async_setup_entry(
     coordinator: RotelCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SwitchEntity] = []
     if coordinator.model.speaker_groups:
-        entities.append(
-            RotelSpeakerSwitch(coordinator, entry, ROTEL_SPEAKERS_A, "a")
-        )
+        entities.append(RotelSpeakerSwitch(coordinator, entry, ROTEL_SPEAKERS_A, "a"))
         if "b" in coordinator.model.speaker_groups:
             entities.append(
                 RotelSpeakerSwitch(coordinator, entry, ROTEL_SPEAKERS_B, "b")
@@ -54,6 +52,7 @@ ROTEL_SPEAKERS_B = SwitchEntityDescription(
     translation_key="speakers_b",
     icon="mdi:speaker",
 )
+
 
 class RotelSpeakerSwitch(RotelEntity, SwitchEntity):
     """One of the switchable speaker groups."""

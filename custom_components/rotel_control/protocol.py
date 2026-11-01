@@ -199,10 +199,7 @@ class RotelModel:
             raise ValueError("volume_max_db must be greater than volume_min_db")
         if self.volume_step_db <= 0:
             raise ValueError("volume_step_db must be positive")
-        if (
-            self.volume_scale is VolumeScale.STEPS
-            and self.volume_steps != VOLUME_UNITS
-        ):
+        if self.volume_scale is VolumeScale.STEPS and self.volume_steps != VOLUME_UNITS:
             # The payload of this scale is a position on the front panel, so a
             # span that is not exactly the width of that panel would make the
             # integration send positions the device cannot hold.
@@ -470,7 +467,9 @@ def get_model(key: str | None) -> RotelModel:
     return ROTEL_MODELS["generic"]
 
 
-def get_model_inputs(model: RotelModel, values: Sequence[str]) -> tuple[RotelInput, ...]:
+def get_model_inputs(
+    model: RotelModel, values: Sequence[str]
+) -> tuple[RotelInput, ...]:
     """Return the inputs of ``model`` limited to ``values``.
 
     Used by the options flow: a unit whose front panel differs from its model

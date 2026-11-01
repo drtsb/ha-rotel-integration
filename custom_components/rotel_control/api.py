@@ -641,9 +641,7 @@ class RotelApi:
             await writer.drain()
         except (ConnectionResetError, BrokenPipeError) as err:
             await self._async_close_locked()
-            raise RotelApiClosedError(
-                f"Device reset the connection: {err}"
-            ) from err
+            raise RotelApiClosedError(f"Device reset the connection: {err}") from err
         except (OSError, TimeoutError) as err:
             await self._async_close_locked()
             raise RotelApiConnectionError(f"Send failed for {line!r}: {err}") from err
@@ -755,9 +753,7 @@ class RotelApi:
         """Ask for a single field, ``None`` when the firmware ignores it."""
         name = str(key)
         try:
-            received = await self._async_exchange(
-                [build_query(key)], required={name}
-            )
+            received = await self._async_exchange([build_query(key)], required={name})
         except RotelApiProtocolError:
             LOGGER.debug("Rotel does not support %s", key)
             return None
@@ -865,11 +861,7 @@ class RotelApi:
         optional = {str(key) for key in self._model.queries}
         # The device information is asked for once: repeating it every poll
         # would only waste bandwidth on a firmware that never answers.
-        wanted = (
-            set(CORE_FIELDS)
-            | optional
-            | ({MODEL, FIRMWARE} - self._asked)
-        )
+        wanted = set(CORE_FIELDS) | optional | ({MODEL, FIRMWARE} - self._asked)
         received = await self._async_exchange(
             [f"{name}?" for name in sorted(wanted)], required={POWER}
         )
