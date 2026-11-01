@@ -180,8 +180,7 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         features = self._attr_supported_features
         if self._fixed_input:
             features &= ~(
-                MediaPlayerEntityFeature.VOLUME_SET
-                | MediaPlayerEntityFeature.VOLUME_STEP
+                MediaPlayerEntityFeature.VOLUME_SET | MediaPlayerEntityFeature.VOLUME_STEP
             )
         return MediaPlayerEntityFeature(features)
 
