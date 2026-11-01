@@ -73,11 +73,27 @@ actually has (see below).
 Copy `custom_components/rotel_control` into the `custom_components`
 directory of your Home Assistant configuration and restart.
 
-## Configuration
+## Lovelace card
 
-Set **POWER OPTION = Quick** in the amplifier setup menu, otherwise it does not
-answer on the network while in standby. With the default *Standby* setting a
-running amplifier still works, but waking it from Home Assistant does not.
+A custom Hi-Fi style Lovelace card for the amplifier is maintained in a
+separate repository:
+
+- https://github.com/drtsb/ha-rotel-card
+
+### Installation (HACS)
+
+1. Add `https://github.com/drtsb/ha-rotel-card` to HACS as a custom
+   repository of type **Dashboard** (Frontend).
+2. Install **Rotel Amplifier Card**.
+3. Restart Home Assistant and clear the browser cache.
+
+Then add the card to a dashboard:
+
+```yaml
+type: custom:rotel-amplifier-card
+entity: media_player.rotel
+```
+
 
 | Field | Default | Description |
 | --- | --- | --- |
