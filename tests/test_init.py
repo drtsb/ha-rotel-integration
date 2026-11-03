@@ -457,6 +457,110 @@ async def test_select_source_service(hass: HomeAssistant, device: FakeRotel) -> 
     assert "Line 1" in state.attributes["options"]
 
 
+async def test_volume_control_is_disabled_on_a_fixed_input(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A fixed-volume input switches the volume regulator off in the UI."""
+    from dataclasses import replace
+
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    # CD pins the volume at the top of the scale while it is selected.
+    fixed_model = replace(
+        coordinator.model,
+        inputs=tuple(
+            replace(item, fixed_volume_db=-12.0) if item.name == "CD" else item
+            for item in coordinator.model.inputs
+        ),
+    )
+    coordinator.model = fixed_model
+    coordinator.api._model = fixed_model
+
+    state = hass.states.get("media_player.living_room_amplifier")
+    assert state.attributes["supported_features"] & 4  # VOLUME_SET
+
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.living_room_input", "option": "CD"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert "cd!" in device.received
+    state = hass.states.get("media_player.living_room_amplifier")
+    assert state.attributes["source"] == "CD"
+    # The slider and the step buttons disappear while the volume is pinned.
+    assert not state.attributes["supported_features"] & 4  # VOLUME_SET
+    assert not state.attributes["supported_features"] & 1024  # VOLUME_STEP
+    # The fixed input is exposed so automations and dashboards can see it.
+    assert state.attributes["fixed_volume"] is True
+    assert state.attributes["fixed_volume_db"] == -12.0
+    # Mute keeps working: it is not part of the pinned level.
+    assert state.attributes["supported_features"] & 8  # VOLUME_MUTE
+
+
+async def test_volume_is_restored_when_leaving_a_fixed_input(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Switching away from a fixed-volume input restores the previous level."""
+    from dataclasses import replace
+
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    fixed_model = replace(
+        coordinator.model,
+        inputs=tuple(
+            replace(item, fixed_volume_db=-12.0) if item.name == "CD" else item
+            for item in coordinator.model.inputs
+        ),
+    )
+    coordinator.model = fixed_model
+    coordinator.api._model = fixed_model
+
+    await hass.services.async_call(
+        "media_player",
+        "volume_set",
+        {"entity_id": "media_player.living_room_amplifier", "volume_level": 0.5},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert "vol_50!" in device.received
+    device.received.clear()
+
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.living_room_input", "option": "CD"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert "cd!" in device.received
+    device.received.clear()
+
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.living_room_input", "option": "Tuner"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    # The source command goes out first, then the volume the user had before
+    # the fixed input swallowed it.
+    assert "tuner!" in device.received
+    assert "vol_50!" in device.received
+    assert device.received.index("tuner!") < device.received.index("vol_50!")
+    device.received.clear()
+
+    # The poll reconciles the level with the amplifier.
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert coordinator.data.source is not None
+    assert coordinator.data.source.name == "Tuner"
+    assert coordinator.data.volume_db == pytest.approx(-35.0)
+
+
 # --- tone controls ------------------------------------------------------
 
 

@@ -164,6 +164,27 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         return [item.name for item in self.coordinator.model.inputs]
 
     @property
+    def _fixed_input(self) -> bool:
+        """True while the selected input pins the volume at a fixed level."""
+        source = self.data.source
+        return source is not None and source.fixed_volume_db is not None
+
+    @property
+    def supported_features(self) -> MediaPlayerEntityFeature:
+        """All features except the volume controls while the volume is fixed.
+
+        A fixed-volume input leaves the regulator nothing to do: the slider and
+        the step buttons disappear instead of pretending they can change the
+        level the amplifier pinned to its own value.
+        """
+        features = self._attr_supported_features
+        if self._fixed_input:
+            features &= ~(
+                MediaPlayerEntityFeature.VOLUME_SET | MediaPlayerEntityFeature.VOLUME_STEP
+            )
+        return MediaPlayerEntityFeature(features)
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose the volume as the device reported it plus the tone controls.
 
@@ -191,6 +212,11 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
             attributes["speakers_b"] = data.speaker_b
         if model.dimmer:
             attributes["display_dimmer"] = data.dimmer
+        if self._fixed_input:
+            source = self.data.source
+            attributes["fixed_volume"] = True
+            if source is not None:
+                attributes["fixed_volume_db"] = source.fixed_volume_db
         return attributes
 
     # --- commands --------------------------------------------------------
@@ -210,17 +236,24 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         unit with the 0..96 front panel scale, 0.54 is position 54 — the number
         the amplifier displays itself — so the amplifier always receives a
         whole number of its own scale instead of a fraction of it.
+        A fixed-volume input ignores the regulator, so there is nothing to set.
         """
+        if self._fixed_input:
+            return
         await self.coordinator.async_set_volume(
             self._volume_at_position(self._position_at_volume(volume))
         )
 
     async def async_volume_up(self, **kwargs: bool) -> None:
         """Raise the volume by one position of the device scale."""
+        if self._fixed_input:
+            return
         await self._async_step_volume(1)
 
     async def async_volume_down(self, **kwargs: bool) -> None:
         """Lower the volume by one position of the device scale."""
+        if self._fixed_input:
+            return
         await self._async_step_volume(-1)
 
     async def _async_step_volume(self, direction: int) -> None:
