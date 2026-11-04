@@ -45,6 +45,21 @@ jobs:
       - name: mypy
         run: uv run --with mypy --with homeassistant mypy custom_components/rotel_control
 
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Run tests
+        run: uv run --with pytest --with homeassistant pytest tests/ -v
+
   version-check:
     name: Manifest version increment
     runs-on: ubuntu-latest
