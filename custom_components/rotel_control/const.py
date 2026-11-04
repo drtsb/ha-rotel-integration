@@ -101,6 +101,8 @@ SPEAKER_STATES: Final[tuple[str, ...]] = ("off", "a", "b", "a_b")
 DIMMER_OPTIONS: Final[tuple[str, ...]] = tuple(
     str(level) for level in range(DIMMER_MIN, DIMMER_MAX + 1)
 )
+
+
 @dataclass(frozen=True, slots=True)
 class RotelInput:
     """A single input (source) of an amplifier.

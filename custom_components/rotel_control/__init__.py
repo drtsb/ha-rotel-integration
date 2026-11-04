@@ -84,9 +84,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: RotelConfigEntry) -> bo
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator: RotelCoordinator | None = hass.data.get(DOMAIN, {}).pop(
-            entry.entry_id, None
-        )
+        coordinator: RotelCoordinator | None = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         if coordinator is not None:
             api = getattr(coordinator, "api", None)
             if api is not None:
