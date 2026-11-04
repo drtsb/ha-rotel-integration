@@ -51,11 +51,7 @@ class DeviceClosed(Exception):
 
 
 def model_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Return the schema used by the user, reauth and reconfigure steps.
-
-    ``defaults`` carries what should be pre-filled: the values a previous
-    (failed) attempt of this flow contained, or what discovery found.
-    """
+    """Return the schema used by the user, reauth and reconfigure steps."""
     return vol.Schema(
         {
             vol.Required(CONF_HOST, default=defaults.get(CONF_HOST) or vol.UNDEFINED): str,
@@ -80,15 +76,7 @@ async def _async_probe(
     connect_timeout: float = CONNECT_TIMEOUT,
     socket_timeout: float = SOCKET_TIMEOUT,
 ) -> tuple[RotelModel, dict[str, Any]]:
-    """Connect to ``host``:``port`` and report which profile to use.
-
-    A model reported by the device always wins over the selected profile,
-    because it carries the exact input list of that unit.
-
-    Raises:
-        CannotConnect: the socket could not be opened.
-        NoResponse: the socket was opened but nothing Rotel answered.
-    """
+    """Connect to ``host``:``port`` and report which profile to use."""
     model = get_model(model_key)
     api = RotelApi(
         host,
@@ -109,7 +97,10 @@ async def _async_probe(
         LOGGER.debug("%s:%s does not answer the Rotel protocol: %s", host, port, err)
         raise NoResponse(str(err)) from err
     finally:
-        await api.async_disconnect()
+        try:
+            await asyncio.wait_for(api.async_disconnect(), timeout=2.0)
+        except (TimeoutError, Exception):
+            pass
 
     return _merge_reported_model(model, info)
 
@@ -140,11 +131,7 @@ async def async_validate_input(
 async def async_find_rotel_port(
     host: str, ports: tuple[int, ...] = CANDIDATE_PORTS
 ) -> tuple[int, RotelModel, dict[str, Any]] | None:
-    """Return the first port that speaks the Rotel protocol, ``None`` if none.
-
-    The ports are probed concurrently: a host that only answers on the last
-    candidate — or on none of them — must not serialise four connect timeouts.
-    """
+    """Return the first port that speaks the Rotel protocol, ``None`` if none."""
     probes = await asyncio.gather(
         *(
             _async_probe(
@@ -167,11 +154,7 @@ async def async_find_rotel_port(
 
 
 def _service_info_value(info: Any, key: str, default: Any = None) -> Any:
-    """Read ``key`` from an ``SsdpServiceInfo``/``ZeroconfServiceInfo``.
-
-    Both are dataclasses in modern Home Assistant but were dicts historically,
-    and ``SsdpServiceInfo`` moved around between releases, so stay tolerant.
-    """
+    """Read ``key`` from discovery info."""
     if isinstance(info, dict):
         return info.get(key, default)
     return getattr(info, key, default)
@@ -186,18 +169,11 @@ def _host_from_location(location: Any) -> str | None:
 
 
 def _discovery_host(info: Any) -> str | None:
-    """Extract the address to connect to from a discovered device.
-
-    ``ip_address`` wins over ``host``: for zeroconf announcements ``host`` was
-    a ``.local.`` name on older Home Assistant releases, which cannot be
-    resolved reliably, while the IP address is what the socket layer needs.
-    """
+    """Extract the address to connect to from a discovered device."""
     for key in ("ip_address", "host"):
         if value := _service_info_value(info, key):
             return str(value)
-    if location := _service_info_value(info, "ssdp_location") or _service_info_value(
-        info, "location"
-    ):
+    if location := _service_info_value(info, "ssdp_location") or _service_info_value(info, "location"):
         return _host_from_location(location)
     upnp = _service_info_value(info, "upnp")
     if isinstance(upnp, dict) and upnp.get("location"):
@@ -263,8 +239,6 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         """Initialise the flow."""
         self._discovered: dict[str, Any] = {}
 
-    # --- discovery -------------------------------------------------------
-
     async def async_step_ssdp(self, discovery_info: Any) -> ConfigFlowResult:
         """Handle a device found through SSDP."""
         LOGGER.debug("Rotel: SSDP discovery %s", discovery_info)
@@ -277,13 +251,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         return await self._async_step_discovered(discovery_info, host)
 
     async def async_step_zeroconf(self, discovery_info: Any) -> ConfigFlowResult:
-        """Handle a device found through zeroconf.
-
-        ``discovery_info`` is a ``ZeroconfServiceInfo``, but that class moved
-        between Home Assistant releases and importing it here would make the
-        config flow depend on the zeroconf requirements being installed, so it
-        is read through :func:`_service_info_value` instead.
-        """
+        """Handle a device found through zeroconf."""
         LOGGER.debug("Rotel: zeroconf discovery %s", discovery_info)
         if not _is_rotel(discovery_info):
             return self.async_abort(reason="not_rotel")
@@ -293,18 +261,11 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         return await self._async_step_discovered(discovery_info, host)
 
     async def _async_step_discovered(self, info: Any, host: str) -> ConfigFlowResult:
-        """Verify the announced device and pre-fill the user step with it.
-
-        The announcement only names the device, never the control port, so the
-        candidate ports are probed and the one that answers is pre-filled.
-        """
+        """Verify the announced device and pre-fill the user step with it."""
         await self.async_set_unique_id(host)
         self._abort_if_unique_id_configured()
 
         announced = _discovery_port(info)
-        # A zeroconf announcement carries the port of the announced service,
-        # which is usually the web interface and not the control port, so the
-        # well known ports are probed first.
         ports = list(CANDIDATE_PORTS)
         if announced and announced not in ports:
             ports.append(announced)
@@ -322,13 +283,9 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         self.context["title_placeholders"] = {"name": self._discovered[CONF_NAME]}
         return await self.async_step_user()
 
-    # --- user step -------------------------------------------------------
-
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for the host, port and model, then verify the connection."""
         errors: dict[str, str] = {}
-        # What the form should show: discovery first, then whatever the user
-        # just typed, so a failed attempt never clears the form.
         defaults: dict[str, Any] = dict(self._discovered)
 
         if user_input is not None:
@@ -360,16 +317,12 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
-    # --- reauth / reconfigure -------------------------------------------
-
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Handle the credential-less reconnect of an unreachable device."""
         self._discovered = dict(entry_data)
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Let the user repair the connection of an existing entry."""
         entry = self._entry_from_context()
         errors: dict[str, str] = {}
@@ -383,9 +336,7 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
         return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
 
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Let the user change host, port or model profile."""
         entry = self._entry_from_context()
         errors: dict[str, str] = {}
@@ -399,14 +350,8 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
         return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
 
-    async def _async_validate_updates(
-        self, user_input: dict[str, Any]
-    ) -> tuple[dict[str, Any] | None, dict[str, str]]:
-        """Validate input for reauth/reconfigure.
-
-        Returns the data updates for the entry, or ``None`` plus the form
-        errors when the device could not be verified.
-        """
+    async def _async_validate_updates(self, user_input: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, str]]:
+        """Validate input for reauth/reconfigure."""
         host = str(user_input[CONF_HOST]).strip()
         port = int(user_input[CONF_PORT])
         model, _, errors = await self._async_probe_input(host, port, user_input[CONF_MODEL_PROFILE])
@@ -418,14 +363,8 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             CONF_MODEL_PROFILE: model.key,
         }, errors
 
-    async def _async_probe_input(
-        self, host: str, port: int, model_key: str
-    ) -> tuple[RotelModel | None, dict[str, Any], dict[str, str]]:
-        """Probe a device and translate the failure into a form error.
-
-        The single place where a probe failure becomes an error key, so the
-        user, reauth and reconfigure steps cannot drift apart.
-        """
+    async def _async_probe_input(self, host: str, port: int, model_key: str) -> tuple[RotelModel | None, dict[str, Any], dict[str, str]]:
+        """Probe a device and translate the failure into a form error."""
         try:
             model, info = await async_validate_input(host, port, model_key)
         except CannotConnect as err:
@@ -438,8 +377,6 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             LOGGER.debug("Rotel: %s:%s does not speak Rotel: %s", host, port, err)
             return None, {}, {"base": "no_response"}
         return model, info, {}
-
-    # --- helpers ---------------------------------------------------------
 
     def _entry_from_context(self) -> ConfigEntry:
         """Return the entry the flow was started for."""
@@ -461,12 +398,8 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 
     @staticmethod
     @callback
-    def async_get_options_flow(entry: ConfigEntry) -> RotelOptionsFlow:
-        """Return the options flow of this handler.
-
-        The entry is not passed to the flow: ``OptionsFlow.config_entry``
-        resolves it from the flow handler on every supported release.
-        """
+    def async_get_options_flow(config_entry: ConfigEntry) -> RotelOptionsFlow:
+        """Get the options flow for this handler."""
         return RotelOptionsFlow()
 
 

@@ -11,12 +11,7 @@ from .coordinator import RotelConfigEntry, RotelCoordinator, RotelData
 
 
 class RotelEntity(CoordinatorEntity[RotelCoordinator]):
-    """Common behaviour of every Rotel entity.
-
-    State is never cached in instance attributes: every property reads
-    :attr:`RotelCoordinator.data`, so a coordinator update is enough to
-    refresh all platforms.
-    """
+    """Common behaviour of every Rotel entity."""
 
     _attr_has_entity_name = True
 
@@ -44,16 +39,9 @@ class RotelEntity(CoordinatorEntity[RotelCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Group all entities of one amplifier under a single device.
-
-        The identifier is the config entry id rather than the host: two
-        amplifiers behind the same IP (different ports) stay separate, and a
-        device that moves to another host keeps its registry entry. Every
-        platform reads this same property, so the media player, the input
-        selector and the speaker switches are always one Matter device.
-        """
+        """Group all entities of one amplifier under a single device."""
         return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
+            identifiers={(DOMAIN, self.coordinator.api.host)},
             manufacturer="Rotel",
             model=self.coordinator.model.name,
             name=self._entry.title,
