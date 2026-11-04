@@ -1889,3 +1889,94 @@ def test_repository_root_carries_the_hacs_brand() -> None:
     with Image.open(root / "icon.png") as image:
         assert image.size == (512, 512)
     assert (root / "logo.png").is_file()
+
+
+async def test_unload_cleans_up_read_task_and_socket(hass: HomeAssistant, device: FakeRotel) -> None:
+    """Unloading cancels the read task, closes the socket and removes data."""
+    entry = await _async_setup(hass, device)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    api = coordinator.api
+
+    read_task = getattr(api, "_read_task", None)
+    assert read_task is not None
+    assert not read_task.done()
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert not api.connected
+    read_task = getattr(api, "_read_task", None)
+    assert read_task is None or read_task.done()
+    assert DOMAIN not in hass.data or entry.entry_id not in hass.data[DOMAIN]
+    state = hass.states.get("media_player.living_room_amplifier")
+    assert state is not None
+    assert state.state == STATE_UNAVAILABLE
+
+
+async def test_unload_is_idempotent(hass: HomeAssistant, device: FakeRotel) -> None:
+    """Unloading twice does not raise."""
+    entry = await _async_setup(hass, device)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    # Second unload should be False/handled gracefully
+    result = await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert result is False or entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_options_flow_push_updates_enforces_min_poll_interval(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """With push_updates enabled, fast poll intervals are lifted to 1800s."""
+    entry = await _async_setup(hass, device)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: 10,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+            CONF_PUSH_UPDATES: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.update_interval.total_seconds() == 1800
+
+
+async def test_options_flow_without_push_updates_keeps_interval(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """Without push_updates the requested interval is kept."""
+    entry = await _async_setup(hass, device)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_POLL_INTERVAL: 60,
+            CONF_MODEL_PROFILE: "ra1572",
+            CONF_INPUTS: [item.value for item in get_model("ra1572").inputs],
+            CONF_PUSH_UPDATES: False,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.update_interval.total_seconds() == 60
+
+
+async def test_entity_identifiers_use_host(hass: HomeAssistant, device: FakeRotel) -> None:
+    """Device identifiers are based on host."""
+    await _async_setup(hass, device)
+    registry = dr.async_get(hass)
+
+    entry = registry.async_get_device(identifiers={(DOMAIN, "127.0.0.1")})
+    assert entry is not None
+    assert entry.manufacturer == "Rotel"
