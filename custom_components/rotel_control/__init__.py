@@ -7,6 +7,8 @@ Every entry gets its own
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from dataclasses import replace
 
 from homeassistant.config_entries import ConfigEntry
@@ -82,8 +84,27 @@ async def async_unload_entry(hass: HomeAssistant, entry: RotelConfigEntry) -> bo
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator: RotelCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.api.async_disconnect()
+        coordinator: RotelCoordinator | None = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        if coordinator is not None:
+            api = getattr(coordinator, "api", None)
+            if api is not None:
+                # Guarantee completion of all background reading tasks
+                read_task = getattr(api, "_read_task", None)
+                if read_task is not None and read_task is not asyncio.current_task():
+                    read_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, TimeoutError, Exception):
+                    await asyncio.wait_for(read_task, timeout=2.0)  # type: ignore[arg-type]
+                # Explicitly close socket with timeout
+                writer = getattr(api, "_writer", None)
+                with contextlib.suppress(TimeoutError, Exception):
+                    await asyncio.wait_for(api.async_disconnect(), timeout=3.0)  # type: ignore[arg-type]
+                if writer is not None:
+                    with contextlib.suppress(Exception):
+                        writer.close()
+                    with contextlib.suppress(TimeoutError, Exception):
+                        await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+            with contextlib.suppress(TimeoutError, Exception):
+                await asyncio.wait_for(coordinator.async_shutdown(), timeout=2.0)
     return unloaded
 
 

@@ -21,20 +21,13 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DEFAULT_PUSH_UPDATES,
     MAX_POLL_INTERVAL,
-    MIN_POLL_INTERVAL,
     MIN_PUSH_POLL_INTERVAL,
 )
 from .protocol import MODEL_LABELS, get_model, selectable_inputs
 
 
 def inputs_selector() -> SelectSelector:
-    """Return the selector that picks the inputs a device has.
-
-    The options are the protocol values (``coax1``), which are what the entry
-    stores, while the labels the user sees come from the ``inputs``
-    translation key. Storing the values keeps a selection valid when a label
-    is renamed or translated.
-    """
+    """Return the selector that picks the inputs a device has."""
     return SelectSelector(
         SelectSelectorConfig(
             options=[item.value for item in selectable_inputs()],
@@ -51,46 +44,49 @@ class RotelOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show and handle the options form."""
         if user_input is not None:
-            # Push updates make the poll a backstop, so a fast poll keeps the
-            # amplifier awake and defeats its own Auto Power Down. The value
-            # is silently lifted when the toggle is on, so a partial
-            # submission (for example a test) keeps its interval.
             if user_input.get(CONF_PUSH_UPDATES):
                 user_input[CONF_POLL_INTERVAL] = max(
-                    user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+                    int(user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)),
                     MIN_PUSH_POLL_INTERVAL,
+                )
+            else:
+                user_input[CONF_POLL_INTERVAL] = int(
+                    user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
                 )
             return self.async_create_entry(data=user_input)
 
+        current_poll = self.config_entry.options.get(
+            CONF_POLL_INTERVAL,
+            self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+        )
+        if current_poll is None:
+            current_poll = DEFAULT_POLL_INTERVAL
         current = {
-            CONF_POLL_INTERVAL: self.config_entry.options.get(
-                CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
-            ),
+            CONF_POLL_INTERVAL: int(current_poll),
             CONF_MODEL_PROFILE: self.config_entry.options.get(
                 CONF_MODEL_PROFILE,
                 self.config_entry.data.get(CONF_MODEL_PROFILE, DEFAULT_MODEL_PROFILE),
             ),
             CONF_PUSH_UPDATES: self.config_entry.options.get(
-                CONF_PUSH_UPDATES, DEFAULT_PUSH_UPDATES
+                CONF_PUSH_UPDATES,
+                self.config_entry.data.get(CONF_PUSH_UPDATES, DEFAULT_PUSH_UPDATES),
             ),
         }
-        # The inputs of the profile in use are the suggestion: changing the
-        # model offers that model's inputs instead of an empty list.
         profile = self.config_entry.options.get(CONF_MODEL_PROFILE, current[CONF_MODEL_PROFILE])
         selected = self.config_entry.options.get(CONF_INPUTS)
         if selected is None:
             selected = [item.value for item in get_model(profile).inputs]
         schema = vol.Schema(
             {
-                vol.Required(CONF_POLL_INTERVAL, default=current[CONF_POLL_INTERVAL]): vol.All(
+                vol.Required(CONF_POLL_INTERVAL, default=int(current[CONF_POLL_INTERVAL])): vol.All(
                     vol.Coerce(int),
-                    vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
+                    vol.Range(min=1, max=MAX_POLL_INTERVAL),
                 ),
                 vol.Required(CONF_MODEL_PROFILE, default=current[CONF_MODEL_PROFILE]): vol.In(
                     MODEL_LABELS
                 ),
                 vol.Required(CONF_INPUTS, default=list(selected)): inputs_selector(),
-                vol.Required(CONF_PUSH_UPDATES, default=current[CONF_PUSH_UPDATES]): bool,
+                vol.Required(CONF_PUSH_UPDATES, default=bool(current[CONF_PUSH_UPDATES])): bool,
             }
         )
         return self.async_show_form(

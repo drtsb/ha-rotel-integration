@@ -30,9 +30,9 @@ DEFAULT_PUSH_UPDATES: Final = True
 DEFAULT_PORT: Final = 9590
 #: Ports that are probed when discovery did not announce a usable one.
 CANDIDATE_PORTS: Final = (DEFAULT_PORT, 9600, 9500)
-DEFAULT_POLL_INTERVAL: Final = 30
-MIN_POLL_INTERVAL: Final = 1
-MAX_POLL_INTERVAL: Final = 300
+DEFAULT_POLL_INTERVAL: Final = 300
+MIN_POLL_INTERVAL: Final = 10
+MAX_POLL_INTERVAL: Final = 3600
 #: Minimum poll interval when push updates are enabled, so the device can idle.
 MIN_PUSH_POLL_INTERVAL: Final = 1800
 #: How long the client keeps a connection open after the last exchange before
@@ -160,12 +160,12 @@ SOURCE_OPTICAL2: Final = RotelInput(
 #: and some report it as ``line1``, both resolve to this one entry.
 #: Named in upper case so Google Home and other Matter controllers render it
 #: as an audio label ("AUX") rather than a sentence-cased word.
-SOURCE_AUX: Final = RotelInput("aux", "AUX", "mdi:audio-input", ("aux1", "line1", "line 1"))
+SOURCE_AUX: Final = RotelInput("aux", "Aux", "mdi:audio-input", ("aux1", "line1", "line 1"))
 #: Front USB of the models with a USB input. ``pcusb`` below is the *PC-USB*
 #: input, which is a different physical connector. The trailing "Audio" makes
 #: the voice assistant answer "USB Audio" instead of the bare "USB", which a
 #: controller could otherwise confuse with a PC-USB or storage device.
-SOURCE_USB: Final = RotelInput("usb", "USB Audio", "mdi:usb", ("usb1", "front usb"))
+SOURCE_USB: Final = RotelInput("usb", "USB", "mdi:usb", ("usb1", "front usb"))
 SOURCE_BLUETOOTH: Final = RotelInput(
     "bluetooth", "Bluetooth", "mdi:bluetooth", ("bt", "bluetooth1")
 )
