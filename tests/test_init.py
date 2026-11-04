@@ -1891,7 +1891,9 @@ def test_repository_root_carries_the_hacs_brand() -> None:
     assert (root / "logo.png").is_file()
 
 
-async def test_unload_cleans_up_read_task_and_socket(hass: HomeAssistant, device: FakeRotel) -> None:
+async def test_unload_cleans_up_read_task_and_socket(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
     """Unloading cancels the read task, closes the socket and removes data."""
     entry = await _async_setup(hass, device)
     coordinator = hass.data[DOMAIN][entry.entry_id]
