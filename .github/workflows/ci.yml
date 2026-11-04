@@ -57,8 +57,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
+      - name: Install dependencies
+        run: uv pip install -r requirements_test.txt
+
       - name: Run tests
-        run: uv run --with pytest --with homeassistant pytest tests/ -v
+        run: uv run pytest tests/ -v
 
   version-check:
     name: Manifest version increment
