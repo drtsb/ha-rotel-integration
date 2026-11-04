@@ -51,16 +51,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
 
       - name: Run tests
-        run: |
-          python -m pip install -r requirements_test.txt
-          python -m pytest tests/ -v
+        run: python -m pytest tests/ -v
 
   version-check:
     name: Manifest version increment
