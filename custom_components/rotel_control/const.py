@@ -119,6 +119,11 @@ class RotelInput:
     #: Values a firmware revision may report for this input instead of
     #: ``value``, e.g. ``analog_cd`` for ``cd``.
     aliases: tuple[str, ...] = ()
+    #: Volume the amplifier pins to while this input is active, in decibel.
+    #: ``None`` means the input is a normal one whose volume the user controls.
+    #: While a fixed-volume input is selected the volume slider is disabled,
+    #: and leaving the input restores the volume that was active before it.
+    fixed_volume_db: float | None = None
 
     @property
     def label(self) -> str:

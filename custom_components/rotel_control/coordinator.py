@@ -185,6 +185,10 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         #: is being published came from.
         self._reported: RotelData | None = None
         self._origin: str = ORIGIN_POLL
+        #: Volume active before entering a fixed-volume input, so it can be
+        #: restored when the user leaves it. The amplifier pins the volume to
+        #: the fixed level of the input and does not remember the previous one.
+        self._volume_before_fixed: float | None = None
         self._device_id: str | None = None
         #: Debouncing for push updates: accumulate rapid reports and apply once.
         self._pending_push: dict[str, Any] | None = None
@@ -459,9 +463,28 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         await self.async_request_refresh()
 
     async def async_set_source(self, source: str) -> None:
-        """Select an input and refresh."""
+        """Select an input and refresh.
+
+        A fixed-volume input pins the amplifier's volume at its own level and
+        the front panel rolls it back when the input is changed by hand. Doing
+        the same from Home Assistant is the job of this method: the volume that
+        was active before entering a fixed-volume input is restored when the
+        user leaves it, so the volume does not stick at the fixed maximum.
+        """
         resolved = await self.api.async_set_source(source)
-        self._async_apply_command(self.known_state.apply(source=resolved))
+        known = self.known_state
+        # Entering a fixed-volume input: remember the volume that was active so
+        # it can be restored when the input is left again.
+        if resolved.fixed_volume_db is not None and self._volume_before_fixed is None:
+            self._volume_before_fixed = known.volume_db
+        # Leaving a fixed-volume input: restore the volume that was active
+        # before it, because the amplifier does not roll the fixed volume back
+        # when the source is changed from Home Assistant.
+        elif self._volume_before_fixed is not None and resolved.fixed_volume_db is None:
+            restored = await self.api.async_set_volume(self._volume_before_fixed)
+            self._volume_before_fixed = None
+            known = known.apply(volume_db=restored)
+        self._async_apply_command(known.apply(source=resolved))
         await self.async_request_refresh()
 
     async def async_set_record_source(self, source: str) -> None:
