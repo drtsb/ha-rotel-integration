@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -97,10 +98,8 @@ async def _async_probe(
         LOGGER.debug("%s:%s does not answer the Rotel protocol: %s", host, port, err)
         raise NoResponse(str(err)) from err
     finally:
-        try:
+        with contextlib.suppress(TimeoutError, Exception):
             await asyncio.wait_for(api.async_disconnect(), timeout=2.0)
-        except (TimeoutError, Exception):
-            pass
 
     return _merge_reported_model(model, info)
 
@@ -173,7 +172,9 @@ def _discovery_host(info: Any) -> str | None:
     for key in ("ip_address", "host"):
         if value := _service_info_value(info, key):
             return str(value)
-    if location := _service_info_value(info, "ssdp_location") or _service_info_value(info, "location"):
+    if location := _service_info_value(info, "ssdp_location") or _service_info_value(
+        info, "location"
+    ):
         return _host_from_location(location)
     upnp = _service_info_value(info, "upnp")
     if isinstance(upnp, dict) and upnp.get("location"):
@@ -322,7 +323,9 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         self._discovered = dict(entry_data)
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Let the user repair the connection of an existing entry."""
         entry = self._entry_from_context()
         errors: dict[str, str] = {}
@@ -336,7 +339,9 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
         return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
 
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Let the user change host, port or model profile."""
         entry = self._entry_from_context()
         errors: dict[str, str] = {}
@@ -350,7 +355,9 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
         return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
 
-    async def _async_validate_updates(self, user_input: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, str]]:
+    async def _async_validate_updates(
+        self, user_input: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, str]]:
         """Validate input for reauth/reconfigure."""
         host = str(user_input[CONF_HOST]).strip()
         port = int(user_input[CONF_PORT])
@@ -363,7 +370,9 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             CONF_MODEL_PROFILE: model.key,
         }, errors
 
-    async def _async_probe_input(self, host: str, port: int, model_key: str) -> tuple[RotelModel | None, dict[str, Any], dict[str, str]]:
+    async def _async_probe_input(
+        self, host: str, port: int, model_key: str
+    ) -> tuple[RotelModel | None, dict[str, Any], dict[str, str]]:
         """Probe a device and translate the failure into a form error."""
         try:
             model, info = await async_validate_input(host, port, model_key)

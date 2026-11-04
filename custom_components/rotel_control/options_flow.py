@@ -21,7 +21,6 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DEFAULT_PUSH_UPDATES,
     MAX_POLL_INTERVAL,
-    MIN_POLL_INTERVAL,
     MIN_PUSH_POLL_INTERVAL,
 )
 from .protocol import MODEL_LABELS, get_model, selectable_inputs
@@ -51,11 +50,14 @@ class RotelOptionsFlow(OptionsFlow):
                     MIN_PUSH_POLL_INTERVAL,
                 )
             else:
-                user_input[CONF_POLL_INTERVAL] = int(user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))
+                user_input[CONF_POLL_INTERVAL] = int(
+                    user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+                )
             return self.async_create_entry(data=user_input)
 
         current_poll = self.config_entry.options.get(
-            CONF_POLL_INTERVAL, self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+            CONF_POLL_INTERVAL,
+            self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
         )
         if current_poll is None:
             current_poll = DEFAULT_POLL_INTERVAL
