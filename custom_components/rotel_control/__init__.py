@@ -97,7 +97,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: RotelConfigEntry) -> bo
                 # Explicitly close socket with timeout
                 writer = getattr(api, "_writer", None)
                 with contextlib.suppress(TimeoutError, Exception):
-                    await asyncio.wait_for(api.async_disconnect(), timeout=3.0)
+                    await asyncio.wait_for(asyncio.create_task(api.async_disconnect()), timeout=3.0)
                 if writer is not None:
                     with contextlib.suppress(Exception):
                         writer.close()
