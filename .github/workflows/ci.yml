@@ -58,10 +58,10 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv pip install -r requirements_test.txt
+        run: uv pip install --system -r requirements_test.txt
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: pytest tests/ -v
 
   version-check:
     name: Manifest version increment
