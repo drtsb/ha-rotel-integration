@@ -57,15 +57,16 @@ jobs:
       - name: Check version increment
         run: |
           set -e
-          base="${{ github.base_ref }}"
-          git fetch origin "$base" --depth=1
-          if git diff --quiet "origin/$base" -- custom_components/rotel_control/manifest.json; then
-            echo "Version in manifest.json must be incremented for each PR (see AGENTS.md)"
+          TARGET_BRANCH="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          MANIFEST="custom_components/rotel_control/manifest.json"
+          OLD_VER=$(git show "$TARGET_BRANCH:$MANIFEST" 2>/dev/null | grep '"version"' | head -n1 || echo "")
+          NEW_VER=$(grep '"version"' "$MANIFEST" | head -n1 || echo "")
+          if [ -z "$OLD_VER" ] || [ -z "$NEW_VER" ]; then
+            echo "Could not determine versions"
             exit 1
           fi
-          base_ver=$(git show "origin/$base:custom_components/rotel_control/manifest.json" | python -c 'import sys,json; print(json.load(sys.stdin)["version"])')
-          head_ver=$(python -c 'import json; print(json.load(open("custom_components/rotel_control/manifest.json"))["version"])')
-          if [ "$base_ver" = "$head_ver" ]; then
+          if [ "$OLD_VER" = "$NEW_VER" ]; then
             echo "Version in manifest.json must be incremented for each PR (see AGENTS.md)"
             exit 1
           fi
