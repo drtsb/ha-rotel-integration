@@ -93,11 +93,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: RotelConfigEntry) -> bo
                 if read_task is not None and read_task is not asyncio.current_task():
                     read_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, TimeoutError, Exception):
-                    await asyncio.wait_for(read_task, timeout=2.0)
+                    await asyncio.wait_for(read_task, timeout=2.0)  # type: ignore[arg-type]
                 # Explicitly close socket with timeout
                 writer = getattr(api, "_writer", None)
                 with contextlib.suppress(TimeoutError, Exception):
-                    await asyncio.wait_for(asyncio.create_task(api.async_disconnect()), timeout=3.0)
+                    await asyncio.wait_for(api.async_disconnect(), timeout=3.0)  # type: ignore[arg-type]
                 if writer is not None:
                     with contextlib.suppress(Exception):
                         writer.close()
