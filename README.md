@@ -1,9 +1,7 @@
 # Rotel Control — Home Assistant Integration
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/default)
-[![Version](https://img.shields.io/github/v/release/drtsb/ha-rotel-integration?color=blue)](https://github.com/drtsb/ha-rotel-integration/releases)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue)](https://www.home-assistant.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Active Installations](https://img.shields.io/badge/dynamic/json?color=41BDF5&logo=home-assistant&label=Active%20Installs&query=%24.rotel_control.total&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json)](https://analytics.home-assistant.io/integrations/) [![GitHub All Releases](https://img.shields.io/github/downloads/drtsb/ha-rotel-integration/total?color=2ea44f&logo=github&label=Downloads)](https://github.com/drtsb/ha-rotel-integration/releases) [![GitHub Release](https://img.shields.io/github/v/release/drtsb/ha-rotel-integration?color=blue&logo=github)](https://github.com/drtsb/ha-rotel-integration/releases/latest)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/) [![CI](https://github.com/drtsb/ha-rotel-integration/actions/workflows/ci.yml/badge.svg)](https://github.com/drtsb/ha-rotel-integration/actions/workflows/ci.yml) [![License](https://img.shields.io/github/license/drtsb/ha-rotel-integration?color=lightgrey)](LICENSE)
 
 Custom Home Assistant integration for Rotel amplifiers and AV processors that expose the ASCII control interface over TCP (default port `9590`, also supports `9500`/`9600`).
 
