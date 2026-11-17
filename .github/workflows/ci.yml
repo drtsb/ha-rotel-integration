@@ -74,6 +74,8 @@ jobs:
           echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
 
       - name: Commit coverage badge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           COVERAGE="${{ steps.coverage.outputs.coverage }}"
           if [ "$COVERAGE" = "null" ] || [ -z "$COVERAGE" ]; then
@@ -94,8 +96,10 @@ jobs:
             "color": "${COLOR}"
           }
           EOF
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git add coverage-badge.json
           if git diff --cached --quiet; then
             echo "Coverage badge unchanged, skipping commit."
