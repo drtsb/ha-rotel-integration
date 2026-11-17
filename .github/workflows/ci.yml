@@ -101,12 +101,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git add coverage-badge.json
-          if git diff --cached --quiet; then
-            echo "Coverage badge unchanged, skipping commit."
-          else
+          if ! git diff --cached --quiet; then
             git commit -m "chore: update coverage badge to ${COVERAGE}%"
-            git push origin "HEAD:${{ github.head_ref }}"
           fi
+          git push --force origin HEAD:refs/heads/coverage-badge || echo "badge push skipped"
 
   version-check:
     name: Manifest version increment
