@@ -315,7 +315,10 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                     },
                 )
 
-        schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
+        schema = self.add_suggested_values_to_schema(
+            model_schema(defaults),  # type: ignore[arg-type]
+            user_input or defaults,
+        )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
@@ -336,7 +339,10 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             if updates is not None:
                 return self.async_update_reload_and_abort(entry, data_updates=updates)
 
-        schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
+        schema = self.add_suggested_values_to_schema(
+            model_schema(defaults),  # type: ignore[arg-type]
+            user_input or defaults,
+        )
         return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
 
     async def async_step_reconfigure(
@@ -352,7 +358,10 @@ class RotelConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             if updates is not None:
                 return self.async_update_reload_and_abort(entry, data_updates=updates)
 
-        schema = self.add_suggested_values_to_schema(model_schema(defaults), user_input or defaults)
+        schema = self.add_suggested_values_to_schema(
+            model_schema(defaults),  # type: ignore[arg-type]
+            user_input or defaults,
+        )
         return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
 
     async def _async_validate_updates(
