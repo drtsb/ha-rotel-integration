@@ -91,7 +91,7 @@ class RotelOptionsFlow(OptionsFlow):
         )
         return self.async_show_form(
             step_id="init",
-            data_schema=schema,
+            data_schema=schema,  # type: ignore[arg-type]
             description_placeholders={"name": self.config_entry.title},
         )
 
