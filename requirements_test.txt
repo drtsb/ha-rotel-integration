@@ -8,6 +8,7 @@ pytest-homeassistant-custom-component==0.13.205
 async-upnp-client>=0.36
 pytest>=8.0
 pytest-asyncio>=0.24
+pytest-cov>=6.0
 ruff>=0.6
 mypy>=1.11
 voluptuous>=0.13
