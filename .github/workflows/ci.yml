@@ -2,11 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -72,6 +71,9 @@ jobs:
 
       - name: Update coverage badge
         if: env.GIST_SECRET != '' && env.GIST_ID != ''
+        env:
+          GIST_SECRET: ${{ secrets.GIST_SECRET }}
+          GIST_ID: ${{ secrets.GIST_ID }}
         uses: Schneegans/dynamic-badges-action@v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
