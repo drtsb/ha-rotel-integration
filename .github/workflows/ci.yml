@@ -9,6 +9,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   validate-ha:
     name: Home Assistant & HACS validation
@@ -70,16 +73,36 @@ jobs:
           COVERAGE=$(jq '.totals.percent_covered_display' coverage.json | tr -d '"')
           echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
 
-      - name: Update coverage badge
-        if: env.GIST_SECRET != '' && env.GIST_ID != ''
-        uses: Schneegans/dynamic-badges-action@v1.9.0
-        with:
-          auth: ${{ secrets.GIST_SECRET }}
-          gistID: ${{ secrets.GIST_ID }}
-          filename: rotel-integration-coverage.json
-          label: Coverage
-          message: ${{ steps.coverage.outputs.coverage }}%
-          color: ${{ steps.coverage.outputs.coverage >= 80 && 'green' || (steps.coverage.outputs.coverage >= 50 && 'yellow' || 'red') }}
+      - name: Commit coverage badge
+        run: |
+          COVERAGE="${{ steps.coverage.outputs.coverage }}"
+          if [ "$COVERAGE" = "null" ] || [ -z "$COVERAGE" ]; then
+            COVERAGE="0"
+          fi
+          if [ "$COVERAGE" -ge 80 ]; then
+            COLOR="green"
+          elif [ "$COVERAGE" -ge 50 ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+          cat > coverage-badge.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "Coverage",
+            "message": "${COVERAGE}%",
+            "color": "${COLOR}"
+          }
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add coverage-badge.json
+          if git diff --cached --quiet; then
+            echo "Coverage badge unchanged, skipping commit."
+          else
+            git commit -m "chore: update coverage badge to ${COVERAGE}%"
+            git push
+          fi
 
   version-check:
     name: Manifest version increment
