@@ -72,7 +72,7 @@ jobs:
 
       - name: Update coverage badge
         if: env.GIST_SECRET != '' && env.GIST_ID != ''
-        uses: Schneegans/dynamic-badges-action@v3
+        uses: Schneegans/dynamic-badges-action@v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: ${{ secrets.GIST_ID }}
