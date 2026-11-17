@@ -101,7 +101,7 @@ jobs:
             echo "Coverage badge unchanged, skipping commit."
           else
             git commit -m "chore: update coverage badge to ${COVERAGE}%"
-            git push
+            git push origin "HEAD:${{ github.head_ref }}"
           fi
 
   version-check:
