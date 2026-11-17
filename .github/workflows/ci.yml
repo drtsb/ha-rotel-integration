@@ -62,7 +62,7 @@ jobs:
           pip install -r requirements_test.txt
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=custom_components/rotel_control --cov-report=json tests/ -v
+        run: python -m pytest --cov=custom_components/rotel_control --cov-report=json tests/ -v
 
       - name: Extract coverage
         id: coverage
