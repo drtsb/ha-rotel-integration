@@ -170,6 +170,17 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         return source is not None and source.fixed_volume_db is not None
 
     @property
+    def _volume_fixed(self) -> bool:
+        """True while the volume cannot be changed from Home Assistant.
+
+        Either the selected input pins the volume (``fixed_volume_db`` set on the
+        catalogue entry) or the amplifier reports ``volume=fix`` for it. Both
+        mean the regulator has nothing to do, so the slider and the step
+        buttons are hidden.
+        """
+        return self._fixed_input or self.data.is_volume_fixed is True
+
+    @property
     def supported_features(self) -> MediaPlayerEntityFeature:
         """All features except the volume controls while the volume is fixed.
 
@@ -178,7 +189,7 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         level the amplifier pinned to its own value.
         """
         features = self._attr_supported_features
-        if self._fixed_input:
+        if self._volume_fixed:
             features &= ~(
                 MediaPlayerEntityFeature.VOLUME_SET | MediaPlayerEntityFeature.VOLUME_STEP
             )
@@ -193,17 +204,27 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         with the display of the amplifier, and the values below it are what the
         switch and select entities act on, which makes a dashboard readable at
         a glance.
+
+        The tone levels are published both as ``bass``/``treble`` (the names a
+        custom card such as ``ha-rotel-card`` reads to draw its VFD display)
+        and as ``bass_db``/``treble_db`` for compatibility with older
+        dashboards. ``is_volume_fixed`` lets a card block the volume slider on
+        its own, and ``sample_rate`` is the DAC frequency the amplifier
+        reports.
         """
         data = self.data
         attributes: dict[str, Any] = {}
         if data.volume_raw is not None:
             attributes["volume_raw"] = data.volume_raw
+        attributes["is_volume_fixed"] = data.is_volume_fixed is True
         if (record := data.record_source) and self.coordinator.model.record_inputs:
             attributes["record_source"] = record.name
         model = self.coordinator.model
         if model.tone_control:
             attributes["bass_db"] = data.bass_db
             attributes["treble_db"] = data.treble_db
+            attributes["bass"] = data.bass_db
+            attributes["treble"] = data.treble_db
             attributes["balance"] = data.balance
         if model.tone_bypass:
             attributes["tone_bypass"] = data.tone_bypass
@@ -212,6 +233,8 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
             attributes["speakers_b"] = data.speaker_b
         if model.dimmer:
             attributes["display_dimmer"] = data.dimmer
+        if model.dac:
+            attributes["sample_rate"] = data.sample_rate
         if self._fixed_input:
             source = self.data.source
             attributes["fixed_volume"] = True
@@ -238,7 +261,7 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
         whole number of its own scale instead of a fraction of it.
         A fixed-volume input ignores the regulator, so there is nothing to set.
         """
-        if self._fixed_input:
+        if self._volume_fixed:
             return
         await self.coordinator.async_set_volume(
             self._volume_at_position(self._position_at_volume(volume))
@@ -246,13 +269,13 @@ class RotelMediaPlayer(RotelEntity, MediaPlayerEntity):
 
     async def async_volume_up(self, **kwargs: bool) -> None:
         """Raise the volume by one position of the device scale."""
-        if self._fixed_input:
+        if self._volume_fixed:
             return
         await self._async_step_volume(1)
 
     async def async_volume_down(self, **kwargs: bool) -> None:
         """Lower the volume by one position of the device scale."""
-        if self._fixed_input:
+        if self._volume_fixed:
             return
         await self._async_step_volume(-1)
 

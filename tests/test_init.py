@@ -25,6 +25,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ServiceNotSupported
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -156,6 +157,7 @@ async def test_all_platforms_are_forwarded(hass: HomeAssistant, device: FakeRote
     assert registry.async_get("switch.living_room_speakers_b")
     assert registry.async_get("switch.living_room_tone_bypass")
     assert registry.async_get("sensor.living_room_control_connection")
+    assert registry.async_get("sensor.living_room_sample_rate")
     assert entry.state is ConfigEntryState.LOADED
 
 
@@ -1040,11 +1042,135 @@ async def test_media_player_exposes_the_tone_state(
     attributes = hass.states.get("media_player.living_room_amplifier").attributes
     assert attributes["bass_db"] == 2
     assert attributes["treble_db"] == -1
+    # The custom card reads the short names to draw its VFD display.
+    assert attributes["bass"] == 2
+    assert attributes["treble"] == -1
     assert attributes["balance"] == 4
     assert attributes["tone_bypass"] is False
     assert attributes["speakers_a"] is True
     assert attributes["speakers_b"] is True
     assert attributes["display_dimmer"] == 0
+    assert attributes["sample_rate"] == "96"
+    assert attributes["is_volume_fixed"] is False
+
+
+@pytest.mark.parametrize(("rate", "khz"), [("96", 96.0), ("192", 192.0), ("44.1", 44.1)])
+async def test_sample_rate_sensor_reports_the_dac_rate(
+    hass: HomeAssistant, socket_enabled: None, rate: str, khz: float
+) -> None:
+    """The DAC sample rate is a numeric sensor in kHz."""
+    device = FakeRotel(frequency=rate)
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
+    state = hass.states.get("sensor.living_room_sample_rate")
+    assert state is not None
+    assert float(state.state) == khz
+    assert state.attributes["unit_of_measurement"] == "kHz"
+
+
+async def test_sample_rate_sensor_shows_off_without_a_clock(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """While no input is clocked the sensor reads ``off`` instead of a number."""
+    device = FakeRotel(frequency="off")
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
+    state = hass.states.get("sensor.living_room_sample_rate")
+    assert state is not None
+    assert state.state == "off"
+    assert state.attributes.get("unit_of_measurement") is None
+
+
+async def test_sample_rate_sensor_survives_a_running_change(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A running unit going from a clocked rate to ``off`` keeps the sensor valid.
+
+    The unit switches with the value (kHz while a rate is clocked, no unit when
+    it is ``off``), and that transition must not leave the sensor in a state
+    Home Assistant rejects — the non-numeric ``off`` must not keep the kHz unit
+    the numeric reading had.
+    """
+    device = FakeRotel(frequency="96")
+    await device.start()
+    try:
+        entry = await _async_setup(hass, device)
+        assert float(hass.states.get("sensor.living_room_sample_rate").state) == 96.0
+        assert (
+            hass.states.get("sensor.living_room_sample_rate").attributes["unit_of_measurement"]
+            == "kHz"
+        )
+
+        device.frequency = "off"
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        state = hass.states.get("sensor.living_room_sample_rate")
+        assert state.state == "off"
+        assert state.attributes.get("unit_of_measurement") is None
+    finally:
+        await device.stop()
+
+
+async def test_sample_rate_sensor_is_unavailable_when_unsupported(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A unit that never reports its frequency leaves the sensor unavailable."""
+    device = FakeRotel(ignore=frozenset({"freq"}))
+    await device.start()
+    try:
+        await _async_setup(hass, device)
+    finally:
+        await device.stop()
+
+    assert hass.states.get("sensor.living_room_sample_rate").state == STATE_UNAVAILABLE
+
+
+async def test_media_player_blocks_volume_when_the_device_reports_fix(
+    hass: HomeAssistant, device: FakeRotel
+) -> None:
+    """A unit reporting ``volume=fix`` disables the slider and drops requests.
+
+    The amplifier pins the level itself (a fixed-volume input), so the volume
+    regulator disappears — Home Assistant refuses a ``volume_set`` on an entity
+    that no longer advertises the feature — and even a direct call to the entity
+    is a no-op that never reaches the device.
+    """
+    device.volume = "fix"
+    await _async_setup(hass, device)
+
+    state = hass.states.get("media_player.living_room_amplifier")
+    assert state.attributes["is_volume_fixed"] is True
+    assert not state.attributes["supported_features"] & 4  # VOLUME_SET
+    assert not state.attributes["supported_features"] & 1024  # VOLUME_STEP
+
+    # Home Assistant rejects the service before it reaches the entity.
+    with pytest.raises(ServiceNotSupported):
+        await hass.services.async_call(
+            "media_player",
+            "volume_set",
+            {"entity_id": "media_player.living_room_amplifier", "volume_level": 0.5},
+            blocking=True,
+        )
+
+    # A direct call to the entity is still a safe no-op.
+    device.received.clear()
+    player = hass.data["entity_components"]["media_player"].get_entity(
+        "media_player.living_room_amplifier"
+    )
+    await player.async_set_volume_level(0.5)
+    await hass.async_block_till_done()
+
+    assert not any(line.startswith("vol_") for line in device.received)
 
 
 async def test_cannot_connect_shows_an_error(hass: HomeAssistant, device: FakeRotel) -> None:

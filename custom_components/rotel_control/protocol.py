@@ -40,6 +40,7 @@ Models differ in a handful of ways only, and all of them are described by
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -102,6 +103,8 @@ class RotelQuery(StrEnum):
     BALANCE = "balance"
     SPEAKER = "speaker"
     DIMMER = "dimmer"
+    #: DAC sample rate the unit is currently clocking at.
+    FREQ = "freq"
 
 
 #: Both spellings of the tone bypass switch are asked for: a unit answers the
@@ -132,6 +135,9 @@ class RotelCommand(StrEnum):
     #: ``bass_<000/+01/-10>!`` and the same for ``treble_``.
     BASS = "bass"
     TREBLE = "treble"
+    #: ``treble_up!``/``treble_down!`` relative steps of the treble control.
+    TREBLE_UP = "treble_up"
+    TREBLE_DOWN = "treble_down"
     #: ``balance_<000/l15/r15>!``.
     BALANCE = "balance"
     #: ``speaker_a_on!`` and friends.
@@ -193,6 +199,10 @@ class RotelModel:
     speaker_groups: tuple[str, ...] = SPEAKER_GROUPS
     #: False for units with a fixed front display brightness.
     dimmer: bool = True
+    #: True for units whose DAC reports the sample rate it is clocking at
+    #: (``freq?``). An old firmware that never answers it simply degrades to
+    #: an unknown sample rate instead of failing the poll.
+    dac: bool = True
 
     def __post_init__(self) -> None:
         if self.volume_max_db <= self.volume_min_db:
@@ -242,6 +252,8 @@ class RotelModel:
             keys.append(RotelQuery.SPEAKER)
         if self.dimmer:
             keys.append(RotelQuery.DIMMER)
+        if self.dac:
+            keys.append(RotelQuery.FREQ)
         return tuple(keys)
 
 
@@ -664,6 +676,22 @@ def parse_volume_number(payload: str) -> float | None:
         return None
 
 
+#: Tokens a unit sends in place of a number while the volume is pinned (an input
+#: configured for fixed volume / pass-through, e.g. an AV receiver on AUX).
+VOLUME_FIXED_TOKENS: frozenset[str] = frozenset({"fix", "fixed"})
+
+
+def volume_is_fixed(payload: str) -> bool:
+    """True when the device reports a fixed volume instead of a level.
+
+    A Rotel answers ``volume=fix$`` (or ``volume=fixed$``) for an input whose
+    volume it pins at a fixed level. That is not a number, so it must not be
+    fed to :func:`volume_from_payload` — callers set ``is_volume_fixed`` instead
+    and ignore volume changes while it is set.
+    """
+    return payload.strip().strip('"').strip().casefold() in VOLUME_FIXED_TOKENS
+
+
 def volume_is_out_of_range(payload: object, model: RotelModel) -> bool:
     """True when a reported volume cannot belong to ``model``."""
     if not isinstance(payload, (int, float)) or isinstance(payload, bool):
@@ -807,6 +835,35 @@ def dimmer_command(value: float) -> str:
     return build_command(RotelCommand.DIMMER, clamp_dimmer(value))
 
 
+def parse_frequency(payload: str) -> str:
+    """Decode a ``freq=`` reply into the sample-rate token.
+
+    The device reports the rate the DAC is clocking at as a plain number
+    (``44.1``, ``48``, ``96``, ``192``) or ``off`` when no input is clocked.
+    The token is returned normalised — stripped of the quoting a firmware may
+    add and case-folded — so ``96`` and ``OFF`` both come back as ``96`` and
+    ``off``.
+    """
+    token = _token(payload).casefold()
+    if not token:
+        raise ProtocolError(f"Unexpected frequency value: {payload!r}")
+    return token
+
+
+def frequency_is_numeric(token: str) -> bool:
+    """True when a ``freq=`` token is a real, finite sample rate.
+
+    ``off`` (and anything else that is not a number) is not a rate. A non-finite
+    value such as ``nan``/``inf`` is rejected too: it parses as a float but has
+    no place on a Home Assistant sensor, which would refuse the state.
+    """
+    try:
+        value = float(token)
+    except ValueError:
+        return False
+    return math.isfinite(value)
+
+
 def _token(payload: str) -> str:
     """Strip the quoting a firmware may add around a value."""
     return payload.strip().strip('"').strip()
@@ -829,6 +886,7 @@ __all__ = (
     "TONE_MAX_DB",
     "TONE_MIN_DB",
     "TONE_STEP_DB",
+    "VOLUME_FIXED_TOKENS",
     "VOLUME_MAX_DB",
     "VOLUME_MIN_DB",
     "VOLUME_STEP_DB",
@@ -850,11 +908,13 @@ __all__ = (
     "dimmer_command",
     "format_balance",
     "format_tone",
+    "frequency_is_numeric",
     "get_model",
     "get_model_inputs",
     "match_input",
     "parse_balance",
     "parse_dimmer",
+    "parse_frequency",
     "parse_message",
     "parse_messages",
     "parse_on_off",
@@ -870,6 +930,7 @@ __all__ = (
     "tone_bypass_state",
     "tone_command",
     "volume_from_payload",
+    "volume_is_fixed",
     "volume_is_out_of_range",
     "volume_payload_range",
     "volume_to_payload",

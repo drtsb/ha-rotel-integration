@@ -239,6 +239,38 @@ def test_volume_sentinels_of_an_implemented_firmware(model: RotelModel) -> None:
     assert protocol.volume_from_payload("min", model) == model.volume_min_db
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ("fix", True),
+        ("fixed", True),
+        ("FIX", True),
+        ('"fix"', True),
+        ("Fixed", True),
+        ("45", False),
+        ("00", False),
+        ("96", False),
+        ("max", False),
+        ("min", False),
+        ("", False),
+    ],
+)
+def test_volume_fixed_detection(payload: str, expected: bool) -> None:
+    """``volume=fix``/``fixed`` is a pinned level, a number is not."""
+    assert protocol.volume_is_fixed(payload) is expected
+
+
+def test_the_fixed_volume_token_is_not_a_number(model: RotelModel) -> None:
+    """``volume=fix`` must not be fed to the numeric decoder.
+
+    A fixed-volume reply has no numeric level, so it is neither a real position
+    nor a sentinel — the caller detects it and leaves the volume alone instead
+    of crashing on an ``int``/``float`` conversion.
+    """
+    assert protocol.parse_volume_number("fix") is None
+    assert protocol.volume_is_fixed("fix") is True
+
+
 def test_negative_payload_on_a_steps_profile_is_read_as_db(model: RotelModel) -> None:
     """A processor reporting decibel must not be clamped to the minimum."""
     assert protocol.volume_from_payload(-30.0, model) == -30.0
@@ -574,11 +606,86 @@ def test_dimmer_commands_cover_every_level() -> None:
     assert len(protocol_const.DIMMER_OPTIONS) == 7
 
 
+# --- DAC sample rate ----------------------------------------------------
+
+
+def test_build_query_reads_the_dac_frequency() -> None:
+    """``freq?`` is the query that reads the DAC sample rate."""
+    assert protocol.build_query(protocol.RotelQuery.FREQ) == "freq?"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ("44.1", "44.1"),
+        ("48", "48"),
+        ("96", "96"),
+        ("192", "192"),
+        ("off", "off"),
+        ("OFF", "off"),
+        ('"96"', "96"),
+    ],
+)
+def test_frequency_replies_decode(payload: str, expected: str) -> None:
+    """Every sample-rate token a unit reports is normalised."""
+    assert protocol.parse_frequency(payload) == expected
+
+
+@pytest.mark.parametrize("payload", ["", "   ", '""'])
+def test_unexpected_frequency_reply_is_rejected(payload: str) -> None:
+    """An empty frequency reply is an error, not a silent value."""
+    with pytest.raises(protocol.ProtocolError):
+        protocol.parse_frequency(payload)
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("44.1", True),
+        ("48", True),
+        ("192", True),
+        ("off", False),
+        ("", False),
+        ("nan", False),
+        ("inf", False),
+        ("-inf", False),
+    ],
+)
+def test_frequency_numeric_detection(token: str, expected: bool) -> None:
+    """A finite numeric rate carries ``kHz``; ``off`` and non-finite do not.
+
+    A non-finite value parses as a float but must not be treated as a rate: it
+    has no place on a Home Assistant sensor, whose numeric-state validation
+    would reject it.
+    """
+    assert protocol.frequency_is_numeric(token) is expected
+
+
+def test_dac_frequency_is_queried_by_profiles_with_a_dac() -> None:
+    """A profile with a DAC is asked for its sample rate."""
+    assert protocol.RotelQuery.FREQ in protocol.get_model("ra1572").queries
+    plain = protocol.RotelModel(
+        key="nodac",
+        name="No DAC",
+        rbc="",
+        inputs=(RotelInput("cd", "CD"),),
+        dac=False,
+    )
+    assert protocol.RotelQuery.FREQ not in plain.queries
+
+
+def test_treble_relative_step_commands() -> None:
+    """The relative treble commands are ``treble_up!``/``treble_down!``."""
+    assert protocol.build_command(protocol.RotelCommand.TREBLE_UP) == "treble_up!"
+    assert protocol.build_command(protocol.RotelCommand.TREBLE_DOWN) == "treble_down!"
+
+
 def test_model_queries_follow_the_declared_features() -> None:
     """A profile without a tone block is never asked for one."""
     model = protocol.get_model("ra1572")
     assert protocol.RotelQuery.BASS in model.queries
     assert protocol.RotelQuery.SPEAKER in model.queries
+    assert protocol.RotelQuery.FREQ in model.queries
     assert protocol.RotelQuery.RECORD_SOURCE not in model.queries
 
     plain = protocol.RotelModel(
@@ -589,6 +696,7 @@ def test_model_queries_follow_the_declared_features() -> None:
         tone_control=False,
         speaker_groups=(),
         dimmer=False,
+        dac=False,
     )
     assert plain.queries == ()
 

@@ -474,12 +474,92 @@ async def test_decode_fields_only_reports_what_the_device_sent(
 
     decoded = api.decode_fields({"volume": "30"})
 
-    assert decoded == {"volume_raw": "30", "volume_db": pytest.approx(-45.0)}
+    assert decoded == {
+        "volume_raw": "30",
+        "is_volume_fixed": False,
+        "volume_db": pytest.approx(-45.0),
+    }
     # A reply that makes no sense is skipped instead of failing the caller.
     assert api.decode_fields({"bass": "loud"}) == {}
     # A poll, however, has to complain about a core field it cannot read.
     with pytest.raises(api_module.RotelApiProtocolError):
         api.decode_fields({"volume": "loud"}, strict=True)
+
+
+async def test_decode_fixed_volume_does_not_crash(api_module, protocol_module, device) -> None:
+    """``volume=fix`` is decoded into the fixed-volume flag, not a number."""
+    api = make_api(api_module, protocol_module, device)
+
+    decoded = api.decode_fields({"volume": "fix"})
+
+    assert decoded == {"volume_raw": "fix", "is_volume_fixed": True}
+    # A numeric report clears the flag again.
+    assert api.decode_fields({"volume": "45"}) == {
+        "volume_raw": "45",
+        "is_volume_fixed": False,
+        "volume_db": pytest.approx(
+            protocol_module.volume_from_payload(45, protocol_module.get_model("ra1572"))
+        ),
+    }
+
+
+async def test_decode_reports_the_sample_rate(api_module, protocol_module, device) -> None:
+    """A ``freq=`` field is decoded into the sample-rate attribute."""
+    api = make_api(api_module, protocol_module, device)
+
+    assert api.decode_fields({"freq": "96"}) == {"sample_rate": "96"}
+    assert api.decode_fields({"freq": "off"}) == {"sample_rate": "off"}
+
+
+async def test_get_status_reports_the_sample_rate(api_module, protocol_module, device) -> None:
+    """A poll reads the DAC sample rate and the fixed-volume flag."""
+    api = make_api(api_module, protocol_module, device)
+    status = await api.async_get_status()
+
+    assert status.sample_rate == "96"
+    assert status.is_volume_fixed is False
+
+
+async def test_a_fixed_volume_is_not_overwritten(api_module, protocol_module, device) -> None:
+    """A unit reporting ``volume=fix`` ignores a set-volume request.
+
+    The level is pinned by the amplifier (a fixed-volume input), so sending a
+    volume command would only switch the reported state to a level the device
+    is not at. The request is dropped and no ``vol_`` command reaches it.
+    """
+    device.volume = "fix"
+    api = make_api(api_module, protocol_module, device)
+    status = await api.async_get_status()
+
+    assert status.is_volume_fixed is True
+    device.received.clear()
+    await api.async_set_volume(-30.0)
+
+    assert not any(line.startswith("vol_") for line in device.received)
+
+
+async def test_leaving_a_fixed_input_clears_the_stale_marker(
+    api_module, protocol_module, device
+) -> None:
+    """Changing the source drops a cached ``volume=fix`` so a level can be set.
+
+    The fixed volume belongs to the input that was left, so keeping it cached
+    would make the coordinator's restore of the previous level look like a
+    request the amplifier ignores — and the volume would stay stuck. After the
+    source change the marker is gone and a volume command is sent again.
+    """
+    device.volume = "fix"
+    api = make_api(api_module, protocol_module, device)
+    await api.async_get_status()
+    assert api.values.get("volume") == "fix"
+
+    await api.async_set_source("tuner")
+    # The stale fixed marker is gone with the input that reported it.
+    assert "volume" not in api.values
+
+    device.received.clear()
+    await api.async_set_volume(-35.0)
+    assert any(line.startswith("vol_") for line in device.received)
 
 
 async def test_disconnect_stops_the_reader(api_module, protocol_module, device) -> None:

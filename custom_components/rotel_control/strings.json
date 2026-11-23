@@ -114,6 +114,9 @@
       },
       "protocol": {
         "name": "Control connection"
+      },
+      "sample_rate": {
+        "name": "Sample rate"
       }
     },
     "switch": {
