@@ -1089,6 +1089,38 @@ async def test_sample_rate_sensor_shows_off_without_a_clock(
     assert state.attributes.get("unit_of_measurement") is None
 
 
+async def test_sample_rate_sensor_survives_a_running_change(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A running unit going from a clocked rate to ``off`` keeps the sensor valid.
+
+    The unit switches with the value (kHz while a rate is clocked, no unit when
+    it is ``off``), and that transition must not leave the sensor in a state
+    Home Assistant rejects — the non-numeric ``off`` must not keep the kHz unit
+    the numeric reading had.
+    """
+    device = FakeRotel(frequency="96")
+    await device.start()
+    try:
+        entry = await _async_setup(hass, device)
+        assert float(hass.states.get("sensor.living_room_sample_rate").state) == 96.0
+        assert (
+            hass.states.get("sensor.living_room_sample_rate").attributes["unit_of_measurement"]
+            == "kHz"
+        )
+
+        device.frequency = "off"
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        state = hass.states.get("sensor.living_room_sample_rate")
+        assert state.state == "off"
+        assert state.attributes.get("unit_of_measurement") is None
+    finally:
+        await device.stop()
+
+
 async def test_sample_rate_sensor_is_unavailable_when_unsupported(
     hass: HomeAssistant, socket_enabled: None
 ) -> None:

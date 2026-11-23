@@ -948,10 +948,19 @@ class RotelApi:
         self._values[MUTE] = state
 
     async def async_set_source(self, source: str) -> RotelInput:
-        """Select an input by label or protocol value."""
+        """Select an input by label or protocol value.
+
+        Leaving an input that pinned the volume unpins it, so a cached
+        ``volume=fix`` of the old input is dropped: without this a following
+        volume command (the coordinator restoring the level that was active
+        before the fixed input) would be mistaken for one the amplifier ignores
+        and silently swallowed.
+        """
         resolved = self._require_source(source, self._model)
         await self._async_command(source_command(resolved.value), echo={SOURCE: resolved.value})
         self._values[SOURCE] = resolved.value
+        if volume_is_fixed(self._values.get(VOLUME, "")):
+            self._values.pop(VOLUME, None)
         return resolved
 
     async def async_set_record_source(self, source: str) -> RotelInput:

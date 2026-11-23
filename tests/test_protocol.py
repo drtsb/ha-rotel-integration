@@ -640,10 +640,24 @@ def test_unexpected_frequency_reply_is_rejected(payload: str) -> None:
 
 @pytest.mark.parametrize(
     ("token", "expected"),
-    [("44.1", True), ("48", True), ("192", True), ("off", False), ("", False)],
+    [
+        ("44.1", True),
+        ("48", True),
+        ("192", True),
+        ("off", False),
+        ("", False),
+        ("nan", False),
+        ("inf", False),
+        ("-inf", False),
+    ],
 )
 def test_frequency_numeric_detection(token: str, expected: bool) -> None:
-    """A numeric rate carries ``kHz``; ``off`` does not."""
+    """A finite numeric rate carries ``kHz``; ``off`` and non-finite do not.
+
+    A non-finite value parses as a float but must not be treated as a rate: it
+    has no place on a Home Assistant sensor, whose numeric-state validation
+    would reject it.
+    """
     assert protocol.frequency_is_numeric(token) is expected
 
 

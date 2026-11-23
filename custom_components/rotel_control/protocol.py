@@ -40,6 +40,7 @@ Models differ in a handful of ways only, and all of them are described by
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -850,12 +851,17 @@ def parse_frequency(payload: str) -> str:
 
 
 def frequency_is_numeric(token: str) -> bool:
-    """True when a ``freq=`` token is a sample rate rather than ``off``."""
+    """True when a ``freq=`` token is a real, finite sample rate.
+
+    ``off`` (and anything else that is not a number) is not a rate. A non-finite
+    value such as ``nan``/``inf`` is rejected too: it parses as a float but has
+    no place on a Home Assistant sensor, which would refuse the state.
+    """
     try:
-        float(token)
+        value = float(token)
     except ValueError:
         return False
-    return True
+    return math.isfinite(value)
 
 
 def _token(payload: str) -> str:

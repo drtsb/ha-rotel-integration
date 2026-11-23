@@ -538,6 +538,30 @@ async def test_a_fixed_volume_is_not_overwritten(api_module, protocol_module, de
     assert not any(line.startswith("vol_") for line in device.received)
 
 
+async def test_leaving_a_fixed_input_clears_the_stale_marker(
+    api_module, protocol_module, device
+) -> None:
+    """Changing the source drops a cached ``volume=fix`` so a level can be set.
+
+    The fixed volume belongs to the input that was left, so keeping it cached
+    would make the coordinator's restore of the previous level look like a
+    request the amplifier ignores — and the volume would stay stuck. After the
+    source change the marker is gone and a volume command is sent again.
+    """
+    device.volume = "fix"
+    api = make_api(api_module, protocol_module, device)
+    await api.async_get_status()
+    assert api.values.get("volume") == "fix"
+
+    await api.async_set_source("tuner")
+    # The stale fixed marker is gone with the input that reported it.
+    assert "volume" not in api.values
+
+    device.received.clear()
+    await api.async_set_volume(-35.0)
+    assert any(line.startswith("vol_") for line in device.received)
+
+
 async def test_disconnect_stops_the_reader(api_module, protocol_module, device) -> None:
     """Closing the socket leaves no task reading it."""
     api = make_api(api_module, protocol_module, device)
