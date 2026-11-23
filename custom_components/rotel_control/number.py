@@ -57,7 +57,7 @@ ROTEL_TREBLE = NumberEntityDescription(
     key="treble_db",
     translation_key="treble",
     native_unit_of_measurement="dB",
-    icon="mdi:equalizer",
+    icon="mdi:tune-vertical",
 )
 
 #: The tone control each description drives.

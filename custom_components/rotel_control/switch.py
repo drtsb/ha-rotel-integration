@@ -48,7 +48,7 @@ ROTEL_SPEAKERS_A = SwitchEntityDescription(
 ROTEL_SPEAKERS_B = SwitchEntityDescription(
     key="speakers_b",
     translation_key="speakers_b",
-    icon="mdi:speaker",
+    icon="mdi:speaker-multiple",
 )
 
 
@@ -88,7 +88,7 @@ class RotelSpeakerSwitch(RotelEntity, SwitchEntity):
 ROTEL_TONE_BYPASS = SwitchEntityDescription(
     key="tone_bypass",
     translation_key="tone_bypass",
-    icon="mdi:power-plug-off",
+    icon="mdi:sine-wave",
 )
 
 

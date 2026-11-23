@@ -41,6 +41,7 @@ QUERIES = {
     "balance": "balance",
     "speaker": "speaker",
     "dimmer": "dimmer",
+    "freq": "frequency",
 }
 
 
@@ -105,6 +106,7 @@ class FakeRotel:
         tone_bypass: bool = False,
         speaker: str = "a",
         dimmer: int = 2,
+        frequency: str = "96",
         legacy_tone: bool = False,
         ignore: frozenset[str] = frozenset(),
         silent: frozenset[str] = frozenset(),
@@ -130,6 +132,8 @@ class FakeRotel:
         #: ``off``, ``a``, ``b`` or ``a_b``.
         self.speaker = speaker
         self.dimmer = dimmer
+        #: DAC sample rate the unit reports, or ``off``.
+        self.frequency = frequency
         #: Firmware that reports the tone bypass as "tone" instead of "bypass".
         self.legacy_tone = legacy_tone
         #: The spelling of the tone bypass this firmware answers.
@@ -312,6 +316,7 @@ class FakeRotel:
             "balance": _balance(self.balance),
             "speaker": self.speaker,
             "dimmer": str(self.dimmer),
+            "frequency": self.frequency,
         }[attribute]
         return f'"{value}"' if self.quote else str(value)
 

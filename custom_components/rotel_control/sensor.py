@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .coordinator import RotelConfigEntry, RotelCoordinator
 from .entity import RotelEntity
+from .protocol import frequency_is_numeric
 
 
 async def async_setup_entry(
@@ -24,13 +25,14 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Rotel sensors from a config entry."""
     coordinator: RotelCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            RotelFirmwareSensor(coordinator, entry),
-            RotelDeviceSensor(coordinator, entry),
-            RotelProtocolSensor(coordinator, entry),
-        ]
-    )
+    entities: list[SensorEntity] = [
+        RotelFirmwareSensor(coordinator, entry),
+        RotelDeviceSensor(coordinator, entry),
+        RotelProtocolSensor(coordinator, entry),
+    ]
+    if coordinator.model.dac:
+        entities.append(RotelSampleRateSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 ROTEL_FIRMWARE = SensorEntityDescription(
@@ -133,3 +135,73 @@ class RotelProtocolSensor(RotelEntity, SensorEntity):
             "failed_updates": self.coordinator.consecutive_failures,
             "unsupported_queries": sorted(self.data.unsupported),
         }
+
+
+ROTEL_SAMPLE_RATE = SensorEntityDescription(
+    key="sample_rate",
+    translation_key="sample_rate",
+    icon="mdi:waveform",
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
+class RotelSampleRateSensor(RotelEntity, SensorEntity):
+    """DAC sample rate the amplifier reports (``freq?``).
+
+    The unit reports the rate the DAC is clocking at as a plain number
+    (``44.1``, ``48``, ``96``, ``192``) or ``off`` when no input is clocked.
+    While a rate is clocked the sensor is numeric and carries the ``kHz`` unit;
+    when it reports ``off`` the sensor shows the string ``off`` instead, so the
+    unit is dropped for that one state rather than forcing a number that is not
+    there.
+    """
+
+    entity_description = ROTEL_SAMPLE_RATE
+
+    def __init__(
+        self,
+        coordinator: RotelCoordinator,
+        entry: RotelConfigEntry,
+    ) -> None:
+        """Initialise the sample rate sensor."""
+        super().__init__(coordinator, entry, ROTEL_SAMPLE_RATE)
+
+    @property
+    def native_value(self) -> float | str | None:
+        """Return the sample rate in kHz, or ``off`` when none is clocked."""
+        rate = self.data.sample_rate
+        if rate is None:
+            return None
+        if frequency_is_numeric(rate):
+            return float(rate)
+        return rate
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return ``kHz`` only while a real sample rate is clocked.
+
+        A plain ``@property`` shadows the base cached property so the unit can
+        follow the value: a numeric rate gets ``kHz``, the ``off`` state gets no
+        unit (a non-numeric value must not claim to be numeric).
+        """
+        rate = self.data.sample_rate
+        if rate is not None and frequency_is_numeric(rate):
+            return "kHz"
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Only available while the amplifier reports a sample rate."""
+        return super().available and self.data.sample_rate is not None
+
+
+__all__ = (
+    "ROTEL_DEVICE",
+    "ROTEL_FIRMWARE",
+    "ROTEL_PROTOCOL",
+    "ROTEL_SAMPLE_RATE",
+    "RotelDeviceSensor",
+    "RotelFirmwareSensor",
+    "RotelProtocolSensor",
+    "RotelSampleRateSensor",
+)

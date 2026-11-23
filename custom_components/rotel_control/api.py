@@ -65,6 +65,7 @@ from .protocol import (
     match_input,
     parse_balance,
     parse_dimmer,
+    parse_frequency,
     parse_messages,
     parse_on_off,
     parse_source,
@@ -78,6 +79,7 @@ from .protocol import (
     tone_bypass_state,
     tone_command,
     volume_from_payload,
+    volume_is_fixed,
     volume_is_out_of_range,
     volume_payload_range,
     volume_to_payload,
@@ -100,6 +102,7 @@ TREBLE = str(RotelQuery.TREBLE)
 BALANCE = str(RotelQuery.BALANCE)
 SPEAKER = str(RotelQuery.SPEAKER)
 DIMMER = str(RotelQuery.DIMMER)
+FREQ = str(RotelQuery.FREQ)
 
 #: The tone bypass switch is ``bypass`` on current firmware and ``tone`` on
 #: older ones; the key the device answered is remembered per connection.
@@ -173,6 +176,8 @@ class RotelStatus:
     firmware: str | None = None
     #: Raw volume as reported by the device (front panel scale).
     volume_raw: str | None = None
+    #: True while the device pins the volume (it reports ``volume=fix``).
+    is_volume_fixed: bool | None = None
     #: Tone block, in decibel, and the balance in L01..L15/R01..R15 steps.
     bass_db: int | None = None
     treble_db: int | None = None
@@ -184,6 +189,8 @@ class RotelStatus:
     speaker_b: bool | None = None
     #: Front display brightness, ``DIMMER_MIN`` is the brightest.
     dimmer: int | None = None
+    #: DAC sample rate the unit reports (``44.1``, ``96``, ``off`` …).
+    sample_rate: str | None = None
     #: Query names that the firmware did not answer.
     unsupported: frozenset[str] = field(default_factory=frozenset)
 
@@ -209,6 +216,7 @@ class RotelStatus:
             model=decoded.get("device_model"),
             firmware=decoded.get("firmware"),
             volume_raw=decoded.get("volume_raw"),
+            is_volume_fixed=decoded.get("is_volume_fixed"),
             bass_db=decoded.get("bass_db"),
             treble_db=decoded.get("treble_db"),
             balance=decoded.get("balance"),
@@ -216,6 +224,7 @@ class RotelStatus:
             speaker_a=decoded.get("speaker_a"),
             speaker_b=decoded.get("speaker_b"),
             dimmer=decoded.get("dimmer"),
+            sample_rate=decoded.get("sample_rate"),
             unsupported=unsupported,
         )
 
@@ -769,25 +778,32 @@ class RotelApi:
             # The raw value is kept as the device reported it: it is the only
             # thing a user can compare with the display of the amplifier.
             state["volume_raw"] = volume[:MAX_VALUE_LENGTH]
-            if (number := parse_volume_number(volume)) is not None and (
-                volume_is_out_of_range(number, model)
-            ):
-                lowest, highest = volume_payload_range(model)
-                LOGGER.warning(
-                    "Rotel reported volume %r which is outside the %s..%s the %s "
-                    "profile expects. Adjust the volume scale of the profile if the "
-                    "volume behaves incorrectly",
+            if volume_is_fixed(volume):
+                # The volume is pinned (fixed-volume / pass-through input). That
+                # is not a level, so it must never be fed to the numeric
+                # decoder — the flag is what the entities act on.
+                state["is_volume_fixed"] = True
+            else:
+                state["is_volume_fixed"] = False
+                if (number := parse_volume_number(volume)) is not None and (
+                    volume_is_out_of_range(number, model)
+                ):
+                    lowest, highest = volume_payload_range(model)
+                    LOGGER.warning(
+                        "Rotel reported volume %r which is outside the %s..%s the %s "
+                        "profile expects. Adjust the volume scale of the profile if the "
+                        "volume behaves incorrectly",
+                        volume,
+                        lowest,
+                        highest,
+                        model.key,
+                    )
+                put(
+                    "volume_db",
+                    lambda value: volume_from_payload(value, model),
                     volume,
-                    lowest,
-                    highest,
-                    model.key,
+                    VOLUME,
                 )
-            put(
-                "volume_db",
-                lambda value: volume_from_payload(value, model),
-                volume,
-                VOLUME,
-            )
 
         for name, record in ((SOURCE, False), (RECORD_SOURCE, True)):
             if (payload := fields.get(name)) is None:
@@ -820,6 +836,9 @@ class RotelApi:
 
         if (payload := fields.get(DIMMER)) is not None:
             put("dimmer", parse_dimmer, payload)
+
+        if (payload := fields.get(FREQ)) is not None:
+            put("sample_rate", parse_frequency, payload, FREQ)
 
         for name, attribute in ((MODEL, "device_model"), (FIRMWARE, "firmware")):
             if (payload := fields.get(name)) is not None:
@@ -895,8 +914,22 @@ class RotelApi:
                 await self.async_set_volume(self._last_volume_db)
 
     async def async_set_volume(self, volume_db: float) -> float:
-        """Set the volume in dB and return the value the device accepted."""
+        """Set the volume in dB and return the value the device accepted.
+
+        A unit that reports its volume as fixed (``volume=fix``) has pinned the
+        level itself — a fixed-volume / pass-through input — and would ignore
+        the command anyway. Sending it would only switch the reported state to
+        a level the amplifier is not actually at, so the request is dropped and
+        the last known level is returned unchanged.
+        """
         snapped = snap_volume(volume_db, self._model)
+        if volume_is_fixed(self._values.get(VOLUME, "")):
+            LOGGER.debug(
+                "Rotel at %s has a fixed volume; ignoring the request for %s dB",
+                self._host,
+                volume_db,
+            )
+            return self._last_volume_db if self._last_volume_db is not None else snapped
         payload = volume_to_payload(snapped, self._model)
         await self._async_command(
             build_command(RotelCommand.VOLUME, payload), echo={VOLUME: str(payload)}

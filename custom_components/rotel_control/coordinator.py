@@ -67,6 +67,8 @@ class RotelData:
     device_model: str | None = None
     #: Volume exactly as the device reported it (front panel scale).
     volume_raw: str | None = None
+    #: True while the amplifier pins the volume (``volume=fix``).
+    is_volume_fixed: bool | None = None
     #: Tone block in dB, and the balance in L01..L15/R01..R15 steps.
     bass_db: int | None = None
     treble_db: int | None = None
@@ -78,6 +80,8 @@ class RotelData:
     speaker_b: bool | None = None
     #: Front display brightness, ``0`` is the brightest.
     dimmer: int | None = None
+    #: DAC sample rate the unit reports (``44.1``, ``96``, ``off`` …).
+    sample_rate: str | None = None
     unsupported: frozenset[str] = frozenset()
 
     @classmethod
@@ -92,6 +96,7 @@ class RotelData:
             firmware=status.firmware,
             device_model=status.model,
             volume_raw=status.volume_raw,
+            is_volume_fixed=status.is_volume_fixed,
             bass_db=status.bass_db,
             treble_db=status.treble_db,
             balance=status.balance,
@@ -99,6 +104,7 @@ class RotelData:
             speaker_a=status.speaker_a,
             speaker_b=status.speaker_b,
             dimmer=status.dimmer,
+            sample_rate=status.sample_rate,
             unsupported=status.unsupported,
         )
 
@@ -447,7 +453,20 @@ class RotelCoordinator(DataUpdateCoordinator[RotelData]):
         await self.async_request_refresh()
 
     async def async_set_volume(self, volume_db: float) -> None:
-        """Set the volume and refresh."""
+        """Set the volume and refresh.
+
+        A unit that reports its volume as fixed (``volume=fix``) has pinned the
+        level itself — a fixed-volume / pass-through input — so a change from
+        Home Assistant is dropped instead of pretending to move a level the
+        amplifier is not at.
+        """
+        if self.known_state.is_volume_fixed:
+            LOGGER.warning(
+                "%s has a fixed volume (VOL FIX); ignoring the request for %.1f dB",
+                self.api.host,
+                volume_db,
+            )
+            return
         applied = await self.api.async_set_volume(volume_db)
         # The raw position of the volume scale is only known here, and the
         # attribute should not wait for the next poll to catch up with it.
